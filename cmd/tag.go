@@ -1,14 +1,22 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Masterminds/semver/v3"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/typeform/tfr-static/internal/git"
 	"github.com/typeform/tfr-static/internal/module"
 )
+
+func isAbort(err error) bool {
+	return errors.Is(err, huh.ErrUserAborted) || errors.Is(err, tea.ErrInterrupted)
+}
+
+var errAborted = errors.New("aborted")
 
 var tagCmd = &cobra.Command{
 	Use:   "tag [module-path]",
@@ -64,6 +72,9 @@ func runTag(cmd *cobra.Command, args []string) error {
 		modulePath = args[0]
 	} else {
 		modulePath, err = selectModule(repoRoot)
+		if errors.Is(err, errAborted) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -128,6 +139,9 @@ func runTag(cmd *cobra.Command, args []string) error {
 		Value(&bumpChoice)
 
 	if err := form.Run(); err != nil {
+		if isAbort(err) {
+			return nil
+		}
 		return fmt.Errorf("selecting release type: %w", err)
 	}
 
@@ -166,6 +180,10 @@ func runTag(cmd *cobra.Command, args []string) error {
 		Value(&shouldPush)
 
 	if err := pushForm.Run(); err != nil {
+		if isAbort(err) {
+			fmt.Printf("Tag created locally. Push it later with: git push origin %s\n", newTag)
+			return nil
+		}
 		return fmt.Errorf("confirming push: %w", err)
 	}
 
@@ -204,6 +222,9 @@ func selectModule(repoPath string) (string, error) {
 		Value(&selected)
 
 	if err := form.Run(); err != nil {
+		if isAbort(err) {
+			return "", errAborted
+		}
 		return "", fmt.Errorf("selecting module: %w", err)
 	}
 

@@ -257,9 +257,9 @@ func TestDevServer_Archive(t *testing.T) {
 		if strings.HasSuffix(hdr.Name, "main.tf") {
 			foundTF = true
 		}
-		// Verify module/ prefix
-		if !strings.HasPrefix(hdr.Name, "module/") {
-			t.Errorf("file %q missing module/ prefix", hdr.Name)
+		// Files should be at the root, no prefix
+		if strings.HasPrefix(hdr.Name, "module/") {
+			t.Errorf("file %q should not have module/ prefix", hdr.Name)
 		}
 	}
 
@@ -417,13 +417,13 @@ func TestBuildArchiveFromWorkTree(t *testing.T) {
 		files[hdr.Name] = true
 	}
 
-	if !files["module/main.tf"] {
-		t.Error("missing module/main.tf")
+	if !files["main.tf"] {
+		t.Error("missing main.tf")
 	}
-	if !files["module/variables.tf"] {
-		t.Error("missing module/variables.tf")
+	if !files["variables.tf"] {
+		t.Error("missing variables.tf")
 	}
-	if files["module/.hidden"] {
+	if files[".hidden"] {
 		t.Error(".hidden should be skipped")
 	}
 }

@@ -18,6 +18,7 @@ var rootCmd = &cobra.Command{
 on object storage (e.g. S3). It uses git tags as the source of truth for
 module versions and generates registry-protocol-compliant files.`,
 	PersistentPreRunE: loadConfig,
+	SilenceUsage:      true,
 }
 
 func Execute() {

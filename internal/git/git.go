@@ -68,7 +68,6 @@ func (r *Runner) ArchiveModule(tag, modulePath, destPath string) error {
 	// git archive produces a tar.gz of the subtree at the tag
 	_, err = r.run("archive",
 		"--format=tar.gz",
-		"--prefix=module/",
 		"--output="+absDestPath,
 		tag,
 		"--",

@@ -230,8 +230,7 @@ func buildArchiveFromWorkTree(repoRoot, modulePath string, w io.Writer) error {
 			return err
 		}
 
-		// Use module/ prefix like git archive --prefix=module/
-		tarPath := "module/" + filepath.ToSlash(relPath)
+		tarPath := filepath.ToSlash(relPath)
 		if info.IsDir() {
 			tarPath += "/"
 		}
