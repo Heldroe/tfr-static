@@ -45,13 +45,13 @@ module "server" {
 
 ```bash
 # Build from source
-go build -o tfr-static .
+go build -o tfrs .
 
 # Or install directly
 go install github.com/typeform/tfr-static@latest
 
 # Move to a directory in your PATH
-mv tfr-static /usr/local/bin/
+mv tfrs /usr/local/bin/
 ```
 
 ## Configuration
@@ -93,25 +93,25 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 
 ## Commands
 
-### `tfr-static publish`
+### `tfrs publish`
 
 Generates static registry files for module versions.
 
 ```bash
 # Publish a specific tag (typical CI use case)
-tfr-static publish --tag hetzner/server-1.0.0
+tfrs publish --tag hetzner/server-1.0.0
 
 # Publish from CI using an environment variable
-TFR_TAG=hetzner/server-1.0.0 tfr-static publish
+TFR_TAG=hetzner/server-1.0.0 tfrs publish
 
 # Regenerate all versions of a specific module
-tfr-static publish --module hetzner/server
+tfrs publish --module hetzner/server
 
 # Regenerate everything (full rebuild)
-tfr-static publish --all
+tfrs publish --all
 
 # Preview what would be generated
-tfr-static publish --all --dry-run
+tfrs publish --all --dry-run
 ```
 
 **Modes:**
@@ -125,16 +125,16 @@ tfr-static publish --all --dry-run
 
 When using `--module` or `--all`, the tool iterates through git tag history. This means deleted modules (no longer in the current tree but still tagged) are still published correctly.
 
-### `tfr-static tag`
+### `tfrs tag`
 
 Interactive helper for creating correctly formatted version tags.
 
 ```bash
 # Interactive: select module from a filterable list, then pick version bump
-tfr-static tag
+tfrs tag
 
 # Tag a specific module
-tfr-static tag hetzner/server
+tfrs tag hetzner/server
 ```
 
 The tag command:
@@ -153,19 +153,19 @@ The tag command:
 
 For new modules with no existing tags, bumping starts from `0.0.0`.
 
-### `tfr-static serve`
+### `tfrs serve`
 
 Start a local HTTP server for the registry.
 
 ```bash
 # Serve the generated static files
-tfr-static serve
+tfrs serve
 
 # Serve on a custom address
-tfr-static serve --addr localhost:9090
+tfrs serve --addr localhost:9090
 
 # Dev mode: serve current working tree for all version requests
-tfr-static serve --dev
+tfrs serve --dev
 ```
 
 **Static mode** (default) serves the output directory as-is, acting as if it were the remote CDN or object storage.
@@ -260,7 +260,7 @@ jobs:
 
       - run: go install github.com/typeform/tfr-static@latest
 
-      - run: tfr-static publish --tag "${GITHUB_REF_NAME}"
+      - run: tfrs publish --tag "${GITHUB_REF_NAME}"
         env:
           TFR_BASE_URL: https://registry.example.com
 
@@ -271,7 +271,7 @@ jobs:
 ### Full rebuild
 
 ```yaml
-- run: tfr-static publish --all
+- run: tfrs publish --all
   env:
     TFR_BASE_URL: https://registry.example.com
 ```

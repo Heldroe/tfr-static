@@ -12,9 +12,9 @@ import (
 var cfg config.Config
 
 var rootCmd = &cobra.Command{
-	Use:   "tfr-static",
+	Use:   "tfrs",
 	Short: "Static Terraform module registry generator",
-	Long: `tfr-static generates static files for hosting a Terraform module registry
+	Long: `tfrs generates static files for hosting a Terraform module registry
 on object storage (e.g. S3). It uses git tags as the source of truth for
 module versions and generates registry-protocol-compliant files.`,
 	PersistentPreRunE: loadConfig,

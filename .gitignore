@@ -1,0 +1,8 @@
+# Build output
+tfrs
+target/
+
+# Go
+*.exe
+*.test
+*.out
