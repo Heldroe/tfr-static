@@ -1,0 +1,262 @@
+package registry
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/typeform/tfr-static/internal/git"
+	"github.com/typeform/tfr-static/internal/module"
+)
+
+// DevServer serves module archives built on the fly from the current working tree.
+// Every download request returns the current state of the module directory,
+// regardless of which version was requested. This lets developers swap the
+// registry domain to localhost and test uncommitted changes without tagging.
+type DevServer struct {
+	Git         *git.Runner
+	RepoRoot    string
+	ModulesPath string
+}
+
+// NewDevServer creates a DevServer.
+func NewDevServer(gitRunner *git.Runner, repoRoot, modulesPath string) *DevServer {
+	if modulesPath == "" {
+		modulesPath = "/"
+	}
+	if !strings.HasPrefix(modulesPath, "/") {
+		modulesPath = "/" + modulesPath
+	}
+	if !strings.HasSuffix(modulesPath, "/") {
+		modulesPath = modulesPath + "/"
+	}
+	return &DevServer{
+		Git:         gitRunner,
+		RepoRoot:    repoRoot,
+		ModulesPath: modulesPath,
+	}
+}
+
+// Handler returns an http.Handler that implements the dev registry.
+func (s *DevServer) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/terraform.json", s.handleServiceDiscovery)
+	mux.HandleFunc("/", s.handleModule)
+	return mux
+}
+
+func (s *DevServer) handleServiceDiscovery(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[dev] %s %s", r.Method, r.URL.Path)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ServiceDiscovery{ModulesV1: s.ModulesPath})
+}
+
+func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[dev] %s %s", r.Method, r.URL.Path)
+	path := strings.TrimPrefix(r.URL.Path, s.ModulesPath)
+	path = strings.TrimPrefix(path, "/")
+
+	switch {
+	case strings.HasSuffix(path, "/versions.json") || strings.HasSuffix(path, "/versions"):
+		s.handleVersions(w, r, path)
+	case strings.HasSuffix(path, "/download"):
+		s.handleDownload(w, r, path)
+	case strings.HasSuffix(path, ".tar.gz"):
+		s.handleArchive(w, r, path)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path string) {
+	// Extract module path: strip trailing /versions.json or /versions
+	modulePath := strings.TrimSuffix(path, "/versions.json")
+	modulePath = strings.TrimSuffix(modulePath, "/versions")
+
+	if !s.moduleExists(modulePath) {
+		log.Printf("[dev] module %q not found in working tree", modulePath)
+		http.NotFound(w, r)
+		return
+	}
+
+	// Collect real versions from tags
+	tags, _ := s.Git.ListTags()
+	allParsed := module.ParseAllTags(tags)
+	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
+
+	var entries []VersionEntry
+	for _, t := range moduleTags {
+		entries = append(entries, VersionEntry{Version: t.Version.Original()})
+	}
+
+	// Always include a dev version so new modules without tags still work.
+	// Use 0.0.0-dev which is lower than any real version, and also add
+	// a very high version so "latest" constraints resolve to it.
+	entries = append(entries,
+		VersionEntry{Version: "0.0.0-dev"},
+		VersionEntry{Version: "99999.0.0-dev"},
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ModuleVersions{
+		Modules: []ModuleVersionList{{Versions: entries}},
+	})
+}
+
+func (s *DevServer) handleDownload(w http.ResponseWriter, r *http.Request, path string) {
+	// path: {module}/{version}/download
+	// Strip /download, then split off the version
+	withoutDownload := strings.TrimSuffix(path, "/download")
+	lastSlash := strings.LastIndex(withoutDownload, "/")
+	if lastSlash == -1 {
+		http.NotFound(w, r)
+		return
+	}
+	modulePath := withoutDownload[:lastSlash]
+	version := withoutDownload[lastSlash+1:]
+
+	if !s.moduleExists(modulePath) {
+		log.Printf("[dev] module %q not found in working tree", modulePath)
+		http.NotFound(w, r)
+		return
+	}
+
+	// Point to the archive endpoint on this same server
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	archiveFile := archiveNameFromParts(modulePath, version)
+	archiveURL := fmt.Sprintf("%s://%s%s%s/%s/%s", scheme, host, s.ModulesPath, modulePath, version, archiveFile)
+
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head>
+<meta name="terraform-get" content="%s" />
+</head>
+<body></body>
+</html>
+`, archiveURL)
+}
+
+func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, path string) {
+	// path: {module}/{version}/{archive}.tar.gz
+	// We need to extract the module path. The archive filename is the last segment.
+	lastSlash := strings.LastIndex(path, "/")
+	if lastSlash == -1 {
+		http.NotFound(w, r)
+		return
+	}
+	dirPath := path[:lastSlash]
+	// dirPath is {module}/{version}, strip the version
+	versionSlash := strings.LastIndex(dirPath, "/")
+	if versionSlash == -1 {
+		http.NotFound(w, r)
+		return
+	}
+	modulePath := dirPath[:versionSlash]
+
+	if !s.moduleExists(modulePath) {
+		log.Printf("[dev] module %q not found in working tree", modulePath)
+		http.NotFound(w, r)
+		return
+	}
+
+	log.Printf("[dev] building archive for %s from working tree", modulePath)
+
+	w.Header().Set("Content-Type", "application/gzip")
+	if err := buildArchiveFromWorkTree(s.RepoRoot, modulePath, w); err != nil {
+		log.Printf("[dev] error building archive: %v", err)
+		http.Error(w, "failed to build archive", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *DevServer) moduleExists(modulePath string) bool {
+	dir := filepath.Join(s.RepoRoot, modulePath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".tf") {
+			return true
+		}
+	}
+	return false
+}
+
+// archiveNameFromParts builds an archive filename without requiring a semver object.
+func archiveNameFromParts(modulePath, version string) string {
+	safePath := strings.ReplaceAll(modulePath, "/", "-")
+	return fmt.Sprintf("%s-%s.tar.gz", safePath, version)
+}
+
+// buildArchiveFromWorkTree creates a tar.gz of the module directory from the
+// filesystem (not from git), so uncommitted changes are included.
+func buildArchiveFromWorkTree(repoRoot, modulePath string, w io.Writer) error {
+	moduleDir := filepath.Join(repoRoot, modulePath)
+
+	gw := gzip.NewWriter(w)
+	defer gw.Close()
+
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+
+	return filepath.Walk(moduleDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip hidden files/dirs
+		if strings.HasPrefix(info.Name(), ".") && info.Name() != "." {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		relPath, err := filepath.Rel(moduleDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Use module/ prefix like git archive --prefix=module/
+		tarPath := "module/" + filepath.ToSlash(relPath)
+		if info.IsDir() {
+			tarPath += "/"
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = tarPath
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		_, err = io.Copy(tw, f)
+		return err
+	})
+}

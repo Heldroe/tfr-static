@@ -1,0 +1,323 @@
+# tfr-static
+
+A CLI tool for hosting a purely static [Terraform module registry](https://developer.hashicorp.com/terraform/internals/module-registry-protocol). It generates registry-protocol-compliant files from a git-based Terraform modules monorepo, ready to be uploaded to object storage (S3, GCS, etc.) and served behind a CDN.
+
+## How it works
+
+**Git tags are the source of truth.** Each module version is represented by a tag in the format `{module_path}-{semver}`:
+
+```
+hetzner/server-0.1.0
+hetzner/server-1.0.0
+aws/ec2/alb-0.0.1
+aws/ec2/security-group-2.1.0
+aws/iam/user-0.2.12
+```
+
+A module is any directory containing `*.tf` files (excluding the repository root). Modules can be nested — `aws/ec2` and `aws/ec2/alb` can both be independent modules.
+
+For each published version, the following files are generated:
+
+| File | Purpose |
+|---|---|
+| `{module}/{version}/{module}-{version}.tar.gz` | The module archive |
+| `{module}/{version}/download` | HTML page with `<meta name="terraform-get">` pointing to the archive |
+| `{module}/versions.json` | Version listing following the registry protocol |
+| `.well-known/terraform.json` | [Service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery) document |
+
+## Usage with Terraform
+
+Once the generated files are uploaded and served at a base URL, modules can be consumed as:
+
+```hcl
+module "server" {
+  source  = "registry.example.com/hetzner/server"
+  version = "1.0.0"
+}
+```
+
+## Requirements
+
+- Go 1.24+
+- Git
+
+## Build & install
+
+```bash
+# Build from source
+go build -o tfr-static .
+
+# Or install directly
+go install github.com/typeform/tfr-static@latest
+
+# Move to a directory in your PATH
+mv tfr-static /usr/local/bin/
+```
+
+## Configuration
+
+Configuration is resolved with the following precedence: **CLI flags > environment variables > config file > defaults**.
+
+### Config file
+
+Place a `.tfr-static.hcl` file at the root of your modules repository:
+
+```hcl
+base_url     = "https://registry.example.com"
+main_branch  = "main"
+output_dir   = "target"
+modules_path = "/"
+```
+
+All fields are optional. Unknown fields will cause an error to catch typos early.
+
+### CLI flags
+
+| Flag | Description | Default |
+|---|---|---|
+| `--base-url` | Base URL for the registry | *(required for publish)* |
+| `--main-branch` | Expected main branch for tagging | `main` |
+| `--output-dir` | Output directory for generated files | `target` |
+| `--modules-path` | Path prefix for `modules.v1` in service discovery | `/` |
+| `--repo` | Path to the git repository | `.` |
+
+### Environment variables
+
+| Variable | Equivalent flag |
+|---|---|
+| `TFR_BASE_URL` | `--base-url` |
+| `TFR_MAIN_BRANCH` | `--main-branch` |
+| `TFR_OUTPUT_DIR` | `--output-dir` |
+| `TFR_MODULES_PATH` | `--modules-path` |
+| `TFR_REPO_PATH` | `--repo` |
+
+## Commands
+
+### `tfr-static publish`
+
+Generates static registry files for module versions.
+
+```bash
+# Publish a specific tag (typical CI use case)
+tfr-static publish --tag hetzner/server-1.0.0
+
+# Publish from CI using an environment variable
+TFR_TAG=hetzner/server-1.0.0 tfr-static publish
+
+# Regenerate all versions of a specific module
+tfr-static publish --module hetzner/server
+
+# Regenerate everything (full rebuild)
+tfr-static publish --all
+
+# Preview what would be generated
+tfr-static publish --all --dry-run
+```
+
+**Modes:**
+
+| Flag | Behavior |
+|---|---|
+| `--tag` | Publish a single version. Generates the archive, download page, and an updated `versions.json`. |
+| `--module` | Rebuild all versions of a module by iterating through its git tags. `versions.json` is generated once at the end. |
+| `--all` | Rebuild all versions of all modules. |
+| `--dry-run` | Show what would be generated and which paths would need CDN invalidation. |
+
+When using `--module` or `--all`, the tool iterates through git tag history. This means deleted modules (no longer in the current tree but still tagged) are still published correctly.
+
+### `tfr-static tag`
+
+Interactive helper for creating correctly formatted version tags.
+
+```bash
+# Interactive: select module from a filterable list, then pick version bump
+tfr-static tag
+
+# Tag a specific module
+tfr-static tag hetzner/server
+```
+
+The tag command:
+
+1. Verifies you're on the main branch and up to date with the remote
+2. Shows a filterable module selector (type to search, arrows to navigate) if no module is specified
+3. Finds the latest existing version from git tags
+4. Presents version bump options with the resulting version number:
+   ```
+   Patch release => 1.9.2  (small fixes, no resource or variables changes)
+   Minor release => 1.10.0 (variables changes, added or removed resources)
+   Major release => 2.0.0  (breaking changes, state modification required)
+   ```
+5. Creates the annotated git tag
+6. Optionally pushes the tag to the remote
+
+For new modules with no existing tags, bumping starts from `0.0.0`.
+
+### `tfr-static serve`
+
+Start a local HTTP server for the registry.
+
+```bash
+# Serve the generated static files
+tfr-static serve
+
+# Serve on a custom address
+tfr-static serve --addr localhost:9090
+
+# Dev mode: serve current working tree for all version requests
+tfr-static serve --dev
+```
+
+**Static mode** (default) serves the output directory as-is, acting as if it were the remote CDN or object storage.
+
+**Dev mode** (`--dev`) is designed for local development. It dynamically serves modules from the current working tree, including uncommitted changes. Every version request returns the current code, regardless of which version was asked for. This lets you:
+
+1. Point Terraform at `localhost:8080` instead of your production registry
+2. Keep your existing `version = "1.0.0"` constraints unchanged
+3. See your local changes applied immediately without tagging or publishing
+
+In dev mode:
+- `/.well-known/terraform.json` returns the service discovery document
+- `/{module}/versions.json` returns all real tagged versions plus synthetic dev versions (`0.0.0-dev` and `99999.0.0-dev`) so that any version constraint can match
+- `/{module}/{version}/download` always points to an on-the-fly archive regardless of the requested version
+- Archives are built from the filesystem (not from git), so uncommitted changes are included
+
+| Flag | Description | Default |
+|---|---|---|
+| `--addr` | Address to listen on | `localhost:8080` |
+| `--dev` | Enable dev mode | `false` |
+
+## Generated output structure
+
+```
+target/
+├── .well-known/
+│   └── terraform.json
+└── hetzner/
+    └── server/
+        ├── versions.json
+        ├── 0.1.0/
+        │   ├── download
+        │   └── hetzner-server-0.1.0.tar.gz
+        └── 1.0.0/
+            ├── download
+            └── hetzner-server-1.0.0.tar.gz
+```
+
+The `.well-known/terraform.json` file implements [Terraform service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery), telling Terraform where the module API lives:
+
+```json
+{
+  "modules.v1": "/"
+}
+```
+
+If your modules are served from a subpath (e.g. behind a reverse proxy at `/v1/modules/`), set `modules_path` accordingly in your config or via `--modules-path`.
+
+The `download` file is an HTML page that Terraform uses for module source resolution:
+
+```html
+<meta name="terraform-get" content="https://registry.example.com/hetzner/server/1.0.0/hetzner-server-1.0.0.tar.gz" />
+```
+
+The `versions.json` file follows the [module versions protocol](https://developer.hashicorp.com/terraform/internals/module-registry-protocol#list-available-versions-for-a-module):
+
+```json
+{
+  "modules": [
+    {
+      "versions": [
+        {"version": "1.0.0"},
+        {"version": "0.1.0"}
+      ]
+    }
+  ]
+}
+```
+
+## CI integration
+
+### GitHub Actions (tag-triggered publish)
+
+```yaml
+name: Publish module
+on:
+  push:
+    tags:
+      - '**-[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for tag history
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - run: go install github.com/typeform/tfr-static@latest
+
+      - run: tfr-static publish --tag "${GITHUB_REF_NAME}"
+        env:
+          TFR_BASE_URL: https://registry.example.com
+
+      - name: Upload to S3
+        run: aws s3 sync target/ s3://your-registry-bucket/ --delete
+```
+
+### Full rebuild
+
+```yaml
+- run: tfr-static publish --all
+  env:
+    TFR_BASE_URL: https://registry.example.com
+```
+
+## Tag format
+
+Tags follow the pattern `{module_path}-{semver}`. The module path can contain slashes and dashes:
+
+| Tag | Module path | Version |
+|---|---|---|
+| `hetzner/server-1.0.0` | `hetzner/server` | `1.0.0` |
+| `aws/ec2/security-group-0.0.1` | `aws/ec2/security-group` | `0.0.1` |
+| `my-org/my-module-2.1.0` | `my-org/my-module` | `2.1.0` |
+
+Parsing is unambiguous: the tag is scanned from right to left for a `-` followed by a valid [strict semver](https://semver.org/). The `v` prefix (e.g. `v1.0.0`) is **not** supported.
+
+## Repository layout
+
+```
+my-terraform-modules/
+├── .tfr-static.hcl          # optional config
+├── hetzner/
+│   ├── server/
+│   │   ├── main.tf          # module: hetzner/server
+│   │   └── variables.tf
+│   └── network/
+│       └── main.tf          # module: hetzner/network
+├── aws/
+│   ├── ec2/
+│   │   ├── main.tf          # module: aws/ec2 (parent is also a module)
+│   │   ├── alb/
+│   │   │   └── main.tf      # module: aws/ec2/alb
+│   │   └── security-group/
+│   │       └── main.tf      # module: aws/ec2/security-group
+│   └── iam/
+│       └── user/
+│           └── main.tf      # module: aws/iam/user
+└── root.tf                   # ignored (root directory is excluded)
+```
+
+A directory is a module if it contains at least one `*.tf` file. The root directory is excluded. Hidden directories (`.git`, `.terraform`, etc.) are skipped.
+
+## Running tests
+
+```bash
+go test ./...
+```
+
+Tests cover tag parsing (including edge cases with dashes, pre-release versions, and malformed tags), module discovery, version ordering, archive generation from git history (including deleted modules), registry file generation, and config file loading.
