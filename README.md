@@ -112,6 +112,14 @@ tfrs publish --all
 
 # Preview what would be generated
 tfrs publish --all --dry-run
+
+# Publish and generate an invalidation file for CDN cache busting
+tfrs publish --tag hetzner/server-1.0.0 --invalidation-file invalidation.txt
+
+# Generate a CloudFront-compatible invalidation batch
+tfrs publish --tag hetzner/server-1.0.0 \
+  --invalidation-file invalidation.json \
+  --invalidation-format cloudfront
 ```
 
 **Modes:**
@@ -123,7 +131,55 @@ tfrs publish --all --dry-run
 | `--all` | Rebuild all versions of all modules. |
 | `--dry-run` | Show what would be generated and which paths would need CDN invalidation. |
 
+| Flag | Description | Default |
+|---|---|---|
+| `--invalidation-file` | Write invalidation paths to this file | *(disabled)* |
+| `--invalidation-format` | Format of the invalidation file: `txt`, `json`, `cloudfront` | `txt` |
+
 When using `--module` or `--all`, the tool iterates through git tag history. This means deleted modules (no longer in the current tree but still tagged) are still published correctly.
+
+#### Invalidation file formats
+
+The `--invalidation-file` flag writes all CDN paths that need cache invalidation after publishing. This is designed to plug into external tools like the AWS CLI — `tfrs` itself does not manage uploads or invalidation.
+
+**`txt`** (default) — one path per line:
+```
+/hetzner/server/versions.json
+/hetzner/server/1.0.0/download
+```
+
+**`json`** — a JSON array of paths:
+```json
+[
+  "/hetzner/server/versions.json",
+  "/hetzner/server/1.0.0/download"
+]
+```
+
+**`cloudfront`** — a JSON payload matching the AWS CloudFront [`create-invalidation --invalidation-batch`](https://docs.aws.amazon.com/cli/latest/reference/cloudfront/create-invalidation.html) schema:
+```json
+{
+  "Paths": {
+    "Quantity": 2,
+    "Items": [
+      "/hetzner/server/versions.json",
+      "/hetzner/server/1.0.0/download"
+    ]
+  },
+  "CallerReference": "tfrs-1711296000"
+}
+```
+
+Example CI usage with CloudFront:
+```bash
+tfrs publish --tag "${GITHUB_REF_NAME}" \
+  --invalidation-file invalidation.json \
+  --invalidation-format cloudfront
+
+aws cloudfront create-invalidation \
+  --distribution-id "$DISTRIBUTION_ID" \
+  --invalidation-batch file://invalidation.json
+```
 
 ### `tfrs tag`
 
@@ -260,12 +316,21 @@ jobs:
 
       - run: go install github.com/typeform/tfr-static@latest
 
-      - run: tfrs publish --tag "${GITHUB_REF_NAME}"
+      - run: |
+          tfrs publish --tag "${GITHUB_REF_NAME}" \
+            --invalidation-file invalidation.json \
+            --invalidation-format cloudfront
         env:
           TFR_BASE_URL: https://registry.example.com
 
       - name: Upload to S3
         run: aws s3 sync target/ s3://your-registry-bucket/ --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --invalidation-batch file://invalidation.json
 ```
 
 ### Full rebuild

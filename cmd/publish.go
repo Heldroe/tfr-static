@@ -12,10 +12,12 @@ import (
 )
 
 var (
-	publishTag    string
-	publishModule string
-	publishAll    bool
-	dryRun        bool
+	publishTag           string
+	publishModule        string
+	publishAll           bool
+	dryRun               bool
+	invalidationFile     string
+	invalidationFormatS  string
 )
 
 var publishCmd = &cobra.Command{
@@ -41,6 +43,8 @@ func init() {
 	publishCmd.Flags().StringVar(&publishModule, "module", "", "regenerate all versions of this module")
 	publishCmd.Flags().BoolVar(&publishAll, "all", false, "regenerate all versions of all modules")
 	publishCmd.Flags().BoolVar(&dryRun, "dry-run", false, "only show what would be done (including invalidations)")
+	publishCmd.Flags().StringVar(&invalidationFile, "invalidation-file", "", "write invalidation paths to this file")
+	publishCmd.Flags().StringVar(&invalidationFormatS, "invalidation-format", "txt", "format of the invalidation file: txt, json, cloudfront")
 	rootCmd.AddCommand(publishCmd)
 }
 
@@ -66,17 +70,28 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("only one of --tag, --module, or --all may be specified")
 	}
 
+	// Validate invalidation format early
+	var invalidationFormat registry.InvalidationFormat
+	if invalidationFile != "" {
+		var err error
+		invalidationFormat, err = registry.ParseInvalidationFormat(invalidationFormatS)
+		if err != nil {
+			return err
+		}
+	}
+
 	gitRunner := git.NewRunner(cfg.RepoPath)
 	publisher := registry.NewPublisher(gitRunner, cfg.OutputDir, cfg.BaseURL, cfg.ModulesPath)
 
+	var invalidationPaths []string
 	var err error
 	switch {
 	case publishTag != "":
-		err = publishSingleTag(publisher, gitRunner, publishTag)
+		invalidationPaths, err = publishSingleTag(publisher, gitRunner, publishTag)
 	case publishModule != "":
-		err = publishModuleVersions(publisher, gitRunner, publishModule)
+		invalidationPaths, err = publishModuleVersions(publisher, gitRunner, publishModule)
 	case publishAll:
-		err = publishAllModules(publisher, gitRunner)
+		invalidationPaths, err = publishAllModules(publisher, gitRunner)
 	}
 	if err != nil {
 		return err
@@ -88,69 +103,83 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if invalidationFile != "" && len(invalidationPaths) > 0 {
+		if err := registry.WriteInvalidationFile(invalidationPaths, invalidationFile, invalidationFormat); err != nil {
+			return err
+		}
+		fmt.Printf("Invalidation file written to %s (%s format, %d paths)\n", invalidationFile, invalidationFormatS, len(invalidationPaths))
+	}
+
 	return nil
 }
 
-func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string) error {
+func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string) ([]string, error) {
 	info, err := module.ParseTag(tag)
 	if err != nil {
-		return fmt.Errorf("invalid tag %q: %w", tag, err)
+		return nil, fmt.Errorf("invalid tag %q: %w", tag, err)
 	}
 
 	// Verify the module path exists at this tag
 	exists, err := gitRunner.PathExistsAtTag(info.Tag, info.ModulePath)
 	if err != nil {
-		return fmt.Errorf("checking module path: %w", err)
+		return nil, fmt.Errorf("checking module path: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("module path %q does not exist at tag %q", info.ModulePath, info.Tag)
+		return nil, fmt.Errorf("module path %q does not exist at tag %q", info.ModulePath, info.Tag)
 	}
+
+	paths := registry.InvalidationPaths(info.ModulePath, info.Version)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %s version %s\n", info.ModulePath, info.Version)
-		for _, p := range registry.InvalidationPaths(info.ModulePath, info.Version) {
+		for _, p := range paths {
 			fmt.Printf("[dry-run] Invalidation: %s\n", p)
 		}
-		return nil
+		return paths, nil
 	}
 
 	fmt.Printf("Publishing %s version %s...\n", info.ModulePath, info.Version)
 	if err := pub.PublishVersion(*info); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Generate versions.json with all known versions for this module
 	versions, err := collectModuleVersions(gitRunner, info.ModulePath)
 	if err != nil {
-		return fmt.Errorf("collecting versions: %w", err)
+		return nil, fmt.Errorf("collecting versions: %w", err)
 	}
 	if err := pub.GenerateVersionsJSON(info.ModulePath, versions); err != nil {
-		return err
+		return nil, err
 	}
 
 	fmt.Printf("Published %s version %s\n", info.ModulePath, info.Version)
 	fmt.Println("\nInvalidation paths:")
-	for _, p := range registry.InvalidationPaths(info.ModulePath, info.Version) {
+	for _, p := range paths {
 		fmt.Printf("  %s\n", p)
 	}
 
-	return nil
+	return paths, nil
 }
 
-func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modulePath string) error {
+func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modulePath string) ([]string, error) {
 	tags, err := gitRunner.ListTags()
 	if err != nil {
-		return fmt.Errorf("listing tags: %w", err)
+		return nil, fmt.Errorf("listing tags: %w", err)
 	}
 
 	allParsed := module.ParseAllTags(tags)
 	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
 
 	if len(moduleTags) == 0 {
-		return fmt.Errorf("no tags found for module %q", modulePath)
+		return nil, fmt.Errorf("no tags found for module %q", modulePath)
 	}
 
 	module.SortVersionsAsc(moduleTags)
+
+	var paths []string
+	for _, t := range moduleTags {
+		paths = append(paths, registry.InvalidationPaths(t.ModulePath, t.Version)...)
+	}
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %d versions of %s:\n", len(moduleTags), modulePath)
@@ -158,45 +187,52 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 			fmt.Printf("[dry-run]   %s\n", t.Version)
 		}
 		fmt.Printf("[dry-run] Invalidation: /%s/versions.json\n", modulePath)
-		return nil
+		return paths, nil
 	}
 
 	var versions []*semver.Version
 	for _, t := range moduleTags {
 		fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
 		if err := pub.PublishVersion(t); err != nil {
-			return fmt.Errorf("publishing %s: %w", t.Tag, err)
+			return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 		}
 		versions = append(versions, t.Version)
 	}
 
 	if err := pub.GenerateVersionsJSON(modulePath, versions); err != nil {
-		return err
+		return nil, err
 	}
 
 	fmt.Printf("\nPublished %d versions of %s\n", len(moduleTags), modulePath)
-	return nil
+	return paths, nil
 }
 
-func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) error {
+func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string, error) {
 	tags, err := gitRunner.ListTags()
 	if err != nil {
-		return fmt.Errorf("listing tags: %w", err)
+		return nil, fmt.Errorf("listing tags: %w", err)
 	}
 
 	allParsed := module.ParseAllTags(tags)
 	if len(allParsed) == 0 {
-		return fmt.Errorf("no module tags found in repository")
+		return nil, fmt.Errorf("no module tags found in repository")
 	}
 
 	grouped := module.GroupTagsByModule(allParsed)
+
+	var paths []string
+	for _, modTags := range grouped {
+		for _, t := range modTags {
+			paths = append(paths, registry.InvalidationPaths(t.ModulePath, t.Version)...)
+		}
+	}
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %d modules:\n", len(grouped))
 		for modPath, modTags := range grouped {
 			fmt.Printf("[dry-run]   %s (%d versions)\n", modPath, len(modTags))
 		}
-		return nil
+		return paths, nil
 	}
 
 	for modPath, modTags := range grouped {
@@ -205,17 +241,17 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) error {
 		for _, t := range modTags {
 			fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
 			if err := pub.PublishVersion(t); err != nil {
-				return fmt.Errorf("publishing %s: %w", t.Tag, err)
+				return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 			}
 			versions = append(versions, t.Version)
 		}
 		if err := pub.GenerateVersionsJSON(modPath, versions); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	fmt.Printf("\nPublished %d modules\n", len(grouped))
-	return nil
+	return paths, nil
 }
 
 func collectModuleVersions(gitRunner *git.Runner, modulePath string) ([]*semver.Version, error) {
