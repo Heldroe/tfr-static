@@ -48,7 +48,7 @@ module "server" {
 go build -o tfrs .
 
 # Or install directly
-go install github.com/typeform/tfr-static@latest
+go install github.com/Heldroe/tfr-static@latest
 
 # Move to a directory in your PATH
 mv tfrs /usr/local/bin/
@@ -314,7 +314,7 @@ jobs:
         with:
           go-version: '1.24'
 
-      - run: go install github.com/typeform/tfr-static@latest
+      - run: go install github.com/Heldroe/tfr-static@latest
 
       - run: |
           tfrs publish --tag "${GITHUB_REF_NAME}" \
