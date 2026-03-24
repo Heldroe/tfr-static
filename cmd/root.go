@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/typeform/tfr-static/internal/config"
-	"github.com/typeform/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/config"
+	"github.com/Heldroe/tfr-static/internal/git"
 )
 
 var cfg config.Config

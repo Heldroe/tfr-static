@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
-	"github.com/typeform/tfr-static/internal/git"
-	"github.com/typeform/tfr-static/internal/module"
+	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/module"
 )
 
 func isAbort(err error) bool {

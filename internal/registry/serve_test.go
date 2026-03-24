@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/typeform/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/git"
 )
 
 func setupDevTestRepo(t *testing.T) (repoPath string, gitRunner *git.Runner) {

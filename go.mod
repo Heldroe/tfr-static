@@ -1,4 +1,4 @@
-module github.com/typeform/tfr-static
+module github.com/Heldroe/tfr-static
 
 go 1.24.4
 

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/typeform/tfr-static/cmd"
+import "github.com/Heldroe/tfr-static/cmd"
 
 func main() {
 	cmd.Execute()

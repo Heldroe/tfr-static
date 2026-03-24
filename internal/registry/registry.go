@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/typeform/tfr-static/internal/git"
-	"github.com/typeform/tfr-static/internal/module"
+	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/module"
 )
 
 // VersionEntry represents a single version in the versions.json file.

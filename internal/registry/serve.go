@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/typeform/tfr-static/internal/git"
-	"github.com/typeform/tfr-static/internal/module"
+	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/module"
 )
 
 // DevServer serves module archives built on the fly from the current working tree.

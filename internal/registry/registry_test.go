@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
-	"github.com/typeform/tfr-static/internal/git"
-	"github.com/typeform/tfr-static/internal/module"
+	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/module"
 )
 
 // setupTestRepo creates a git repo with a module and tags it.

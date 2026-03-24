@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/spf13/cobra"
-	"github.com/typeform/tfr-static/internal/git"
-	"github.com/typeform/tfr-static/internal/registry"
+	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/registry"
 )
 
 var (
