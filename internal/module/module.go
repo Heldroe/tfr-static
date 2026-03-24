@@ -54,9 +54,14 @@ func FormatTag(modulePath string, version *semver.Version) string {
 
 // DiscoverModules walks the repository directory and finds all directories
 // containing .tf files (excluding the root directory).
-func DiscoverModules(repoPath string) ([]Module, error) {
+// Any directories in excludeDirs are skipped (matched by name, not path).
+func DiscoverModules(repoPath string, excludeDirs ...string) ([]Module, error) {
 	var modules []Module
 	seen := make(map[string]bool)
+	excludeSet := make(map[string]bool, len(excludeDirs))
+	for _, d := range excludeDirs {
+		excludeSet[d] = true
+	}
 
 	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -65,6 +70,11 @@ func DiscoverModules(repoPath string) ([]Module, error) {
 
 		// Skip hidden directories (like .git, .terraform)
 		if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
+		}
+
+		// Skip excluded directories
+		if info.IsDir() && excludeSet[info.Name()] {
 			return filepath.SkipDir
 		}
 

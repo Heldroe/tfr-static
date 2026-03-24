@@ -66,12 +66,25 @@ func runTag(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("local branch %q is not up to date with remote; please pull first", cfg.MainBranch)
 	}
 
+	// Discover modules and tags upfront (needed for both selection and validation)
+	modules, err := module.DiscoverModules(repoRoot, cfg.OutputDir)
+	if err != nil {
+		return fmt.Errorf("discovering modules: %w", err)
+	}
+
+	tags, err := gitRunner.ListTags()
+	if err != nil {
+		return fmt.Errorf("listing tags: %w", err)
+	}
+	allParsed := module.ParseAllTags(tags)
+	grouped := module.GroupTagsByModule(allParsed)
+
 	// Determine module path
 	var modulePath string
 	if len(args) > 0 {
 		modulePath = args[0]
 	} else {
-		modulePath, err = selectModule(repoRoot)
+		modulePath, err = selectModule(modules, grouped)
 		if errors.Is(err, errAborted) {
 			return nil
 		}
@@ -81,10 +94,6 @@ func runTag(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate the module path exists in the current tree
-	modules, err := module.DiscoverModules(repoRoot)
-	if err != nil {
-		return fmt.Errorf("discovering modules: %w", err)
-	}
 	found := false
 	for _, m := range modules {
 		if m.Path == modulePath {
@@ -96,12 +105,6 @@ func runTag(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("module %q not found in repository (no .tf files in that directory)", modulePath)
 	}
 
-	// Find the latest version for this module
-	tags, err := gitRunner.ListTags()
-	if err != nil {
-		return fmt.Errorf("listing tags: %w", err)
-	}
-	allParsed := module.ParseAllTags(tags)
 	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
 
 	var currentVersion *semver.Version
@@ -200,18 +203,22 @@ func runTag(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func selectModule(repoPath string) (string, error) {
-	modules, err := module.DiscoverModules(repoPath)
-	if err != nil {
-		return "", fmt.Errorf("discovering modules: %w", err)
-	}
+func selectModule(modules []module.Module, grouped map[string][]module.TagInfo) (string, error) {
 	if len(modules) == 0 {
 		return "", fmt.Errorf("no modules found in repository")
 	}
 
 	options := make([]huh.Option[string], len(modules))
 	for i, m := range modules {
-		options[i] = huh.NewOption(m.Path, m.Path)
+		label := m.Path
+		if tags, ok := grouped[m.Path]; ok {
+			if latest := module.LatestVersion(tags); latest != nil {
+				label = fmt.Sprintf("%s (%s)", m.Path, latest.Version)
+			}
+		} else {
+			label = fmt.Sprintf("%s (no tags)", m.Path)
+		}
+		options[i] = huh.NewOption(label, m.Path)
 	}
 
 	var selected string
