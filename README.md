@@ -45,13 +45,10 @@ module "server" {
 
 ```bash
 # Build from source
-go build -o tfrs .
+go build .
 
 # Or install directly
 go install github.com/Heldroe/tfr-static@latest
-
-# Move to a directory in your PATH
-mv tfrs /usr/local/bin/
 ```
 
 ## Configuration
@@ -93,31 +90,31 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 
 ## Commands
 
-### `tfrs publish`
+### `tfr-static publish`
 
 Generates static registry files for module versions.
 
 ```bash
 # Publish a specific tag (typical CI use case)
-tfrs publish --tag hetzner/server-1.0.0
+tfr-static publish --tag hetzner/server-1.0.0
 
 # Publish from CI using an environment variable
-TFR_TAG=hetzner/server-1.0.0 tfrs publish
+TFR_TAG=hetzner/server-1.0.0 tfr-static publish
 
 # Regenerate all versions of a specific module
-tfrs publish --module hetzner/server
+tfr-static publish --module hetzner/server
 
 # Regenerate everything (full rebuild)
-tfrs publish --all
+tfr-static publish --all
 
 # Preview what would be generated
-tfrs publish --all --dry-run
+tfr-static publish --all --dry-run
 
 # Publish and generate an invalidation file for CDN cache busting
-tfrs publish --tag hetzner/server-1.0.0 --invalidation-file invalidation.txt
+tfr-static publish --tag hetzner/server-1.0.0 --invalidation-file invalidation.txt
 
 # Generate a CloudFront-compatible invalidation batch
-tfrs publish --tag hetzner/server-1.0.0 \
+tfr-static publish --tag hetzner/server-1.0.0 \
   --invalidation-file invalidation.json \
   --invalidation-format cloudfront
 ```
@@ -140,7 +137,7 @@ When using `--module` or `--all`, the tool iterates through git tag history. Thi
 
 #### Invalidation file formats
 
-The `--invalidation-file` flag writes all CDN paths that need cache invalidation after publishing. This is designed to plug into external tools like the AWS CLI — `tfrs` itself does not manage uploads or invalidation.
+The `--invalidation-file` flag writes all CDN paths that need cache invalidation after publishing. This is designed to plug into external tools like the AWS CLI — `tfr-static` itself does not manage uploads or invalidation.
 
 **`txt`** (default) — one path per line:
 ```
@@ -166,13 +163,13 @@ The `--invalidation-file` flag writes all CDN paths that need cache invalidation
       "/hetzner/server/1.0.0/download"
     ]
   },
-  "CallerReference": "tfrs-1711296000"
+  "CallerReference": "tfr-static-1711296000"
 }
 ```
 
 Example CI usage with CloudFront:
 ```bash
-tfrs publish --tag "${GITHUB_REF_NAME}" \
+tfr-static publish --tag "${GITHUB_REF_NAME}" \
   --invalidation-file invalidation.json \
   --invalidation-format cloudfront
 
@@ -181,16 +178,16 @@ aws cloudfront create-invalidation \
   --invalidation-batch file://invalidation.json
 ```
 
-### `tfrs tag`
+### `tfr-static tag`
 
 Interactive helper for creating correctly formatted version tags.
 
 ```bash
 # Interactive: select module from a filterable list, then pick version bump
-tfrs tag
+tfr-static tag
 
 # Tag a specific module
-tfrs tag hetzner/server
+tfr-static tag hetzner/server
 ```
 
 The tag command:
@@ -209,19 +206,19 @@ The tag command:
 
 For new modules with no existing tags, bumping starts from `0.0.0`.
 
-### `tfrs serve`
+### `tfr-static serve`
 
 Start a local HTTP server for the registry.
 
 ```bash
 # Serve the generated static files
-tfrs serve
+tfr-static serve
 
 # Serve on a custom address
-tfrs serve --addr localhost:9090
+tfr-static serve --addr localhost:9090
 
 # Dev mode: serve current working tree for all version requests
-tfrs serve --dev
+tfr-static serve --dev
 ```
 
 **Static mode** (default) serves the output directory as-is, acting as if it were the remote CDN or object storage.
@@ -317,7 +314,7 @@ jobs:
       - run: go install github.com/Heldroe/tfr-static@latest
 
       - run: |
-          tfrs publish --tag "${GITHUB_REF_NAME}" \
+          tfr-static publish --tag "${GITHUB_REF_NAME}" \
             --invalidation-file invalidation.json \
             --invalidation-format cloudfront
         env:
@@ -336,7 +333,7 @@ jobs:
 ### Full rebuild
 
 ```yaml
-- run: tfrs publish --all
+- run: tfr-static publish --all
   env:
     TFR_BASE_URL: https://registry.example.com
 ```

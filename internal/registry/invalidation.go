@@ -64,7 +64,7 @@ func WriteInvalidationFile(paths []string, filePath string, format InvalidationF
 				Quantity: len(paths),
 				Items:    paths,
 			},
-			CallerReference: fmt.Sprintf("tfrs-%d", time.Now().Unix()),
+			CallerReference: fmt.Sprintf("tfr-static-%d", time.Now().Unix()),
 		}
 		data, err = json.MarshalIndent(batch, "", "  ")
 		if err != nil {

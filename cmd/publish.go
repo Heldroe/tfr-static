@@ -28,13 +28,13 @@ for one or more module versions. By default publishes a single tag.
 
 Examples:
   # Publish a specific tag
-  tfrs publish --tag hetzner/server-1.0.0
+  tfr-static publish --tag hetzner/server-1.0.0
 
   # Regenerate all versions of a module
-  tfrs publish --module hetzner/server
+  tfr-static publish --module hetzner/server
 
   # Regenerate everything
-  tfrs publish --all`,
+  tfr-static publish --all`,
 	RunE: runPublish,
 }
 

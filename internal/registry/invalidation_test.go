@@ -124,7 +124,7 @@ func TestWriteInvalidationFile_CloudFront(t *testing.T) {
 	if batch.Paths.Items[0] != paths[0] || batch.Paths.Items[1] != paths[1] {
 		t.Errorf("Items = %v, want %v", batch.Paths.Items, paths)
 	}
-	if !strings.HasPrefix(batch.CallerReference, "tfrs-") {
-		t.Errorf("CallerReference = %q, want prefix 'tfrs-'", batch.CallerReference)
+	if !strings.HasPrefix(batch.CallerReference, "tfr-static-") {
+		t.Errorf("CallerReference = %q, want prefix 'tfr-static-'", batch.CallerReference)
 	}
 }
