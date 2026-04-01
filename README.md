@@ -117,6 +117,12 @@ tfr-static publish --tag hetzner/server-1.0.0 --invalidation-file invalidation.t
 tfr-static publish --tag hetzner/server-1.0.0 \
   --invalidation-file invalidation.json \
   --invalidation-format cloudfront
+
+# Publish with HTML documentation
+tfr-static publish --all --html
+
+# Pre-compress text files for S3 upload
+tfr-static publish --all --gzip
 ```
 
 **Modes:**
@@ -132,6 +138,9 @@ tfr-static publish --tag hetzner/server-1.0.0 \
 |---|---|---|
 | `--invalidation-file` | Write invalidation paths to this file | *(disabled)* |
 | `--invalidation-format` | Format of the invalidation file: `txt`, `json`, `cloudfront` | `txt` |
+| `--html` | Generate HTML documentation pages for browsing modules | `false` |
+| `--html-index` | Filename for HTML index pages | `index.html` |
+| `--gzip` | Gzip-compress text files for pre-compressed upload to S3 | `false` |
 
 When using `--module` or `--all`, the tool iterates through git tag history. This means deleted modules (no longer in the current tree but still tagged) are still published correctly.
 
@@ -177,6 +186,58 @@ aws cloudfront create-invalidation \
   --distribution-id "$DISTRIBUTION_ID" \
   --invalidation-batch file://invalidation.json
 ```
+
+#### HTML documentation
+
+The `--html` flag generates a browsable HTML documentation tree alongside the registry files:
+
+```bash
+tfr-static publish --all --html
+```
+
+This creates `index.html` pages at each level of the output:
+
+```
+target/
+├── index.html                          (root: links to all modules)
+├── hetzner/
+│   └── server/
+│       ├── index.html                  (module: lists versions, shows README)
+│       ├── 1.0.0/
+│       │   └── index.html              (version: download link, shows README)
+│       └── 0.1.0/
+│           └── index.html
+```
+
+If a module directory contains a `README.md` next to its `.tf` files, the README is rendered as HTML on both the module page (from the latest version) and each version page (from that version's tag).
+
+Use `--html-index` to change the filename (e.g. `--html-index docs.html`).
+
+#### Pre-compressed upload with `--gzip`
+
+The `--gzip` flag gzip-compresses all text files (HTML, JSON, `download` pages) in the output directory. Archives (`.tar.gz`) are left untouched since they are already compressed.
+
+Files are compressed in-place and keep their original names — no `.gz` extension is added. This is designed for uploading pre-compressed files to S3 with the appropriate `Content-Encoding` header.
+
+```bash
+tfr-static publish --all --gzip
+```
+
+When uploading to S3, text files and archives need different headers. Use two `aws s3 cp` commands:
+
+```bash
+# Text files: Content-Encoding: gzip (browsers decompress transparently)
+aws s3 cp target/ s3://your-registry-bucket/ --recursive \
+  --exclude "*.tar.gz" \
+  --content-encoding gzip
+
+# Archives: no Content-Encoding (gzip IS the content format)
+aws s3 cp target/ s3://your-registry-bucket/ --recursive \
+  --exclude "*" --include "*.tar.gz" \
+  --content-type application/gzip
+```
+
+Without `--gzip`, a single `aws s3 cp --recursive` is sufficient.
 
 ### `tfr-static tag`
 

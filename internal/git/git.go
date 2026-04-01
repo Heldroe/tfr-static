@@ -143,6 +143,16 @@ func (r *Runner) PathExistsAtTag(tag, path string) (bool, error) {
 	return true, nil
 }
 
+// ShowFileAtTag returns the contents of a file at a given tag.
+// Returns empty string and no error if the file does not exist.
+func (r *Runner) ShowFileAtTag(tag, path string) (string, error) {
+	out, err := r.run("show", tag+":"+path)
+	if err != nil {
+		return "", nil
+	}
+	return out, nil
+}
+
 // ListFilesAtTag lists files under a path at a given tag.
 func (r *Runner) ListFilesAtTag(tag, path string) ([]string, error) {
 	prefix := path

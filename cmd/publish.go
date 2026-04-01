@@ -18,6 +18,9 @@ var (
 	dryRun               bool
 	invalidationFile     string
 	invalidationFormatS  string
+	htmlEnabled          bool
+	htmlIndexFile        string
+	gzipEnabled          bool
 )
 
 var publishCmd = &cobra.Command{
@@ -45,6 +48,9 @@ func init() {
 	publishCmd.Flags().BoolVar(&dryRun, "dry-run", false, "only show what would be done (including invalidations)")
 	publishCmd.Flags().StringVar(&invalidationFile, "invalidation-file", "", "write invalidation paths to this file")
 	publishCmd.Flags().StringVar(&invalidationFormatS, "invalidation-format", "txt", "format of the invalidation file: txt, json, cloudfront")
+	publishCmd.Flags().BoolVar(&htmlEnabled, "html", false, "generate HTML documentation pages")
+	publishCmd.Flags().StringVar(&htmlIndexFile, "html-index", "index.html", "filename for HTML index pages")
+	publishCmd.Flags().BoolVar(&gzipEnabled, "gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
 	rootCmd.AddCommand(publishCmd)
 }
 
@@ -100,6 +106,21 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	if !dryRun {
 		if err := publisher.GenerateServiceDiscovery(); err != nil {
 			return fmt.Errorf("generating service discovery: %w", err)
+		}
+
+		if htmlEnabled {
+			if err := generateHTML(gitRunner, cfg.OutputDir, htmlIndexFile); err != nil {
+				return fmt.Errorf("generating HTML documentation: %w", err)
+			}
+			fmt.Println("HTML documentation generated")
+		}
+
+		if gzipEnabled {
+			count, err := registry.GzipTextFiles(cfg.OutputDir)
+			if err != nil {
+				return fmt.Errorf("gzip compressing files: %w", err)
+			}
+			fmt.Printf("Gzip-compressed %d text files\n", count)
 		}
 	}
 
@@ -252,6 +273,20 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 
 	fmt.Printf("\nPublished %d modules\n", len(grouped))
 	return paths, nil
+}
+
+func generateHTML(gitRunner *git.Runner, outputDir, indexFile string) error {
+	tags, err := gitRunner.ListTags()
+	if err != nil {
+		return fmt.Errorf("listing tags: %w", err)
+	}
+	allParsed := module.ParseAllTags(tags)
+	if len(allParsed) == 0 {
+		return nil
+	}
+	grouped := module.GroupTagsByModule(allParsed)
+	gen := registry.NewHTMLGenerator(gitRunner, outputDir, indexFile)
+	return gen.GenerateAll(grouped)
 }
 
 func collectModuleVersions(gitRunner *git.Runner, modulePath string) ([]*semver.Version, error) {
