@@ -51,10 +51,11 @@ type modulePageData struct {
 }
 
 type versionPageData struct {
-	ModulePath string
-	Version    string
-	ArchiveURL string
-	ReadmeHTML template.HTML
+	ModulePath          string
+	Version             string
+	ArchiveURL          string
+	ArchiveDownloadName string
+	ReadmeHTML          template.HTML
 }
 
 // GenerateAll generates the complete HTML documentation tree.
@@ -148,15 +149,16 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 
 func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 	archiveFile := archiveName(tag.ModulePath, tag.Version)
-	archiveURL := fmt.Sprintf("%s/%s", tag.Version.Original(), archiveFile)
+	archiveURL := archiveFile
 
 	readmeHTML := g.renderReadme(tag.Tag, tag.ModulePath)
 
 	data := versionPageData{
-		ModulePath: tag.ModulePath,
-		Version:    tag.Version.Original(),
-		ArchiveURL: archiveURL,
-		ReadmeHTML: readmeHTML,
+		ModulePath:          tag.ModulePath,
+		Version:             tag.Version.Original(),
+		ArchiveURL:          archiveURL,
+		ArchiveDownloadName: descriptiveArchiveName(tag.ModulePath, tag.Version),
+		ReadmeHTML:          readmeHTML,
 	}
 	dir := filepath.Join(g.OutputDir, tag.ModulePath, tag.Version.Original())
 	return g.writeTemplate(filepath.Join(dir, g.IndexFile), versionTmpl, data)
@@ -288,7 +290,7 @@ var versionTmpl = template.Must(template.New("version").Funcs(template.FuncMap{
 <div class="container">
 <p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
 <h1>{{.ModulePath}} <span class="version">{{.Version}}</span></h1>
-<p>Download: <a href="{{.ArchiveURL}}">{{.ArchiveURL}}</a></p>
+<p>Download: <a href="{{.ArchiveURL}}" download="{{.ArchiveDownloadName}}">{{.ArchiveURL}}</a></p>
 {{if .ReadmeHTML}}
 <hr>
 <div class="readme">{{.ReadmeHTML}}</div>

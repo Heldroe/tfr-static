@@ -81,7 +81,7 @@ func TestPublishVersion(t *testing.T) {
 	}
 
 	// Check archive exists
-	archivePath := filepath.Join(outputDir, "hetzner/server/1.0.0/hetzner-server-1.0.0.tar.gz")
+	archivePath := filepath.Join(outputDir, "hetzner/server/1.0.0/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created")
 	}
@@ -96,7 +96,7 @@ func TestPublishVersion(t *testing.T) {
 	if !strings.Contains(content, `<meta name="terraform-get"`) {
 		t.Error("download file missing terraform-get meta tag")
 	}
-	expectedURL := "https://registry.example.com/hetzner/server/1.0.0/hetzner-server-1.0.0.tar.gz"
+	expectedURL := "https://registry.example.com/hetzner/server/1.0.0/module.tar.gz"
 	if !strings.Contains(content, expectedURL) {
 		t.Errorf("download file doesn't contain expected URL %q, got:\n%s", expectedURL, content)
 	}
@@ -120,7 +120,7 @@ func TestPublishVersionDashInModuleName(t *testing.T) {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
-	archivePath := filepath.Join(outputDir, "aws/ec2/security-group/0.0.1/aws-ec2-security-group-0.0.1.tar.gz")
+	archivePath := filepath.Join(outputDir, "aws/ec2/security-group/0.0.1/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created for dash-named module")
 	}
@@ -145,7 +145,7 @@ func TestPublishNestedModule(t *testing.T) {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
-	archivePath := filepath.Join(outputDir, "aws/ec2/1.0.0/aws-ec2-1.0.0.tar.gz")
+	archivePath := filepath.Join(outputDir, "aws/ec2/1.0.0/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created for nested parent module")
 	}
@@ -229,6 +229,26 @@ func TestArchiveName(t *testing.T) {
 	tests := []struct {
 		modulePath string
 		version    string
+	}{
+		{"hetzner/server", "1.0.0"},
+		{"aws/ec2/security-group", "0.0.1"},
+		{"simple", "2.0.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.modulePath, func(t *testing.T) {
+			got := archiveName(tt.modulePath, semver.MustParse(tt.version))
+			if got != "module.tar.gz" {
+				t.Errorf("archiveName(%q, %q) = %q, want %q", tt.modulePath, tt.version, got, "module.tar.gz")
+			}
+		})
+	}
+}
+
+func TestDescriptiveArchiveName(t *testing.T) {
+	tests := []struct {
+		modulePath string
+		version    string
 		want       string
 	}{
 		{"hetzner/server", "1.0.0", "hetzner-server-1.0.0.tar.gz"},
@@ -238,9 +258,9 @@ func TestArchiveName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.modulePath, func(t *testing.T) {
-			got := archiveName(tt.modulePath, semver.MustParse(tt.version))
+			got := descriptiveArchiveName(tt.modulePath, semver.MustParse(tt.version))
 			if got != tt.want {
-				t.Errorf("archiveName(%q, %q) = %q, want %q", tt.modulePath, tt.version, got, tt.want)
+				t.Errorf("descriptiveArchiveName(%q, %q) = %q, want %q", tt.modulePath, tt.version, got, tt.want)
 			}
 		})
 	}

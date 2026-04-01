@@ -20,7 +20,7 @@ For each published version, the following files are generated:
 
 | File | Purpose |
 |---|---|
-| `{module}/{version}/{module}-{version}.tar.gz` | The module archive |
+| `{module}/{version}/module.tar.gz` | The module archive |
 | `{module}/{version}/download` | HTML page with `<meta name="terraform-get">` pointing to the archive |
 | `{module}/versions.json` | Version listing following the registry protocol |
 | `.well-known/terraform.json` | [Service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery) document |
@@ -312,10 +312,10 @@ target/
         ├── versions.json
         ├── 0.1.0/
         │   ├── download
-        │   └── hetzner-server-0.1.0.tar.gz
+        │   └── module.tar.gz
         └── 1.0.0/
             ├── download
-            └── hetzner-server-1.0.0.tar.gz
+            └── module.tar.gz
 ```
 
 The `.well-known/terraform.json` file implements [Terraform service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery), telling Terraform where the module API lives:
@@ -331,7 +331,7 @@ If your modules are served from a subpath (e.g. behind a reverse proxy at `/v1/m
 The `download` file is an HTML page that Terraform uses for module source resolution:
 
 ```html
-<meta name="terraform-get" content="https://registry.example.com/hetzner/server/1.0.0/hetzner-server-1.0.0.tar.gz" />
+<meta name="terraform-get" content="https://registry.example.com/hetzner/server/1.0.0/module.tar.gz" />
 ```
 
 The `versions.json` file follows the [module versions protocol](https://developer.hashicorp.com/terraform/internals/module-registry-protocol#list-available-versions-for-a-module):

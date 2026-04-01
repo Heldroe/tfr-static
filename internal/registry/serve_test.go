@@ -197,7 +197,7 @@ func TestDevServer_Download(t *testing.T) {
 	if !strings.Contains(content, `<meta name="terraform-get"`) {
 		t.Error("missing terraform-get meta tag")
 	}
-	if !strings.Contains(content, "hetzner-server-1.0.0.tar.gz") {
+	if !strings.Contains(content, "module.tar.gz") {
 		t.Errorf("missing archive reference in:\n%s", content)
 	}
 }
@@ -223,7 +223,7 @@ func TestDevServer_Archive(t *testing.T) {
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/1.0.0/hetzner-server-1.0.0.tar.gz")
+	resp, err := http.Get(srv.URL + "/hetzner/server/1.0.0/module.tar.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,6 +235,12 @@ func TestDevServer_Archive(t *testing.T) {
 
 	if ct := resp.Header.Get("Content-Type"); ct != "application/gzip" {
 		t.Errorf("Content-Type = %q", ct)
+	}
+
+	// Verify Content-Disposition header with descriptive filename
+	cd := resp.Header.Get("Content-Disposition")
+	if cd != `attachment; filename="hetzner-server-1.0.0.tar.gz"` {
+		t.Errorf("Content-Disposition = %q, want %q", cd, `attachment; filename="hetzner-server-1.0.0.tar.gz"`)
 	}
 
 	// Verify it's a valid tar.gz and contains the expected file
@@ -278,7 +284,7 @@ func TestDevServer_Archive_ServesWorkingTree(t *testing.T) {
 	tfPath := filepath.Join(repoPath, "hetzner", "server", "main.tf")
 	os.WriteFile(tfPath, []byte(`resource "hetzner_server" "this" { name = "modified" }`), 0o644)
 
-	resp, _ := http.Get(srv.URL + "/hetzner/server/1.0.0/hetzner-server-1.0.0.tar.gz")
+	resp, _ := http.Get(srv.URL + "/hetzner/server/1.0.0/module.tar.gz")
 	defer resp.Body.Close()
 
 	gr, _ := gzip.NewReader(resp.Body)
@@ -310,7 +316,7 @@ func TestDevServer_Archive_NonExistentModule(t *testing.T) {
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/nonexistent/1.0.0/nonexistent-1.0.0.tar.gz")
+	resp, _ := http.Get(srv.URL + "/nonexistent/1.0.0/module.tar.gz")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 404 {

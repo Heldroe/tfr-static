@@ -88,7 +88,12 @@ func (p *Publisher) GenerateServiceDiscovery() error {
 
 // archiveName returns the archive filename for a module version.
 func archiveName(modulePath string, version *semver.Version) string {
-	// Replace slashes with dashes for the filename
+	return "module.tar.gz"
+}
+
+// descriptiveArchiveName returns a human-friendly archive filename (e.g. "hetzner-server-1.0.0.tar.gz")
+// for use in download attributes and Content-Disposition headers.
+func descriptiveArchiveName(modulePath string, version *semver.Version) string {
 	safePath := strings.ReplaceAll(modulePath, "/", "-")
 	return fmt.Sprintf("%s-%s.tar.gz", safePath, version.Original())
 }

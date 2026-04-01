@@ -173,6 +173,8 @@ func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, path s
 
 	log.Printf("[dev] building archive for %s from working tree", modulePath)
 
+	descriptiveName := descriptiveArchiveNameFromParts(modulePath, dirPath[versionSlash+1:])
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, descriptiveName))
 	w.Header().Set("Content-Type", "application/gzip")
 	if err := buildArchiveFromWorkTree(s.RepoRoot, modulePath, w); err != nil {
 		log.Printf("[dev] error building archive: %v", err)
@@ -197,6 +199,12 @@ func (s *DevServer) moduleExists(modulePath string) bool {
 
 // archiveNameFromParts builds an archive filename without requiring a semver object.
 func archiveNameFromParts(modulePath, version string) string {
+	return "module.tar.gz"
+}
+
+// descriptiveArchiveNameFromParts returns a human-friendly archive filename
+// for use in Content-Disposition headers.
+func descriptiveArchiveNameFromParts(modulePath, version string) string {
 	safePath := strings.ReplaceAll(modulePath, "/", "-")
 	return fmt.Sprintf("%s-%s.tar.gz", safePath, version)
 }

@@ -92,7 +92,8 @@ func TestHTMLGenerator_GenerateAll(t *testing.T) {
 	verIndex := filepath.Join(outputDir, "hetzner", "server", "1.0.0", "index.html")
 	assertFileContains(t, verIndex, "hetzner/server")
 	assertFileContains(t, verIndex, "1.0.0")
-	assertFileContains(t, verIndex, ".tar.gz")
+	assertFileContains(t, verIndex, "module.tar.gz")
+	assertFileContains(t, verIndex, `download="hetzner-server-1.0.0.tar.gz"`)
 	// Should contain rendered README for this version
 	assertFileContains(t, verIndex, "Hetzner Server")
 

@@ -19,7 +19,7 @@ func TestGzipTextFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<html>root</html>`), 0o644)
 
 	// Create a .tar.gz file (should be skipped)
-	os.WriteFile(filepath.Join(dir, "mod", "1.0.0", "mod-1.0.0.tar.gz"), []byte("fake archive"), 0o644)
+	os.WriteFile(filepath.Join(dir, "mod", "1.0.0", "module.tar.gz"), []byte("fake archive"), 0o644)
 
 	count, err := GzipTextFiles(dir)
 	if err != nil {
@@ -49,7 +49,7 @@ func TestGzipTextFiles(t *testing.T) {
 	}
 
 	// Verify .tar.gz was NOT modified (still readable as plain text)
-	data, _ := os.ReadFile(filepath.Join(dir, "mod", "1.0.0", "mod-1.0.0.tar.gz"))
+	data, _ := os.ReadFile(filepath.Join(dir, "mod", "1.0.0", "module.tar.gz"))
 	if string(data) != "fake archive" {
 		t.Error(".tar.gz file was modified")
 	}
