@@ -12,15 +12,13 @@ import (
 )
 
 var (
-	publishTag           string
-	publishModule        string
-	publishAll           bool
-	dryRun               bool
-	invalidationFile     string
-	invalidationFormatS  string
-	htmlEnabled          bool
-	htmlIndexFile        string
-	gzipEnabled          bool
+	publishTag          string
+	publishModule       string
+	publishAll          bool
+	publishDev          bool
+	dryRun              bool
+	invalidationFile    string
+	invalidationFormatS string
 )
 
 var publishCmd = &cobra.Command{
@@ -37,7 +35,11 @@ Examples:
   tfr-static publish --module hetzner/server
 
   # Regenerate everything
-  tfr-static publish --all`,
+  tfr-static publish --all
+
+  # Publish from working tree (dev mode)
+  tfr-static publish --dev
+  tfr-static publish --dev --module hetzner/server`,
 	RunE: runPublish,
 }
 
@@ -45,18 +47,41 @@ func init() {
 	publishCmd.Flags().StringVar(&publishTag, "tag", os.Getenv("TFR_TAG"), "specific tag to publish (also reads TFR_TAG env var)")
 	publishCmd.Flags().StringVar(&publishModule, "module", "", "regenerate all versions of this module")
 	publishCmd.Flags().BoolVar(&publishAll, "all", false, "regenerate all versions of all modules")
+	publishCmd.Flags().BoolVar(&publishDev, "dev", false, "publish from working tree as 0.0.0-dev")
 	publishCmd.Flags().BoolVar(&dryRun, "dry-run", false, "only show what would be done (including invalidations)")
 	publishCmd.Flags().StringVar(&invalidationFile, "invalidation-file", "", "write invalidation paths to this file")
 	publishCmd.Flags().StringVar(&invalidationFormatS, "invalidation-format", "txt", "format of the invalidation file: txt, json, cloudfront")
-	publishCmd.Flags().BoolVar(&htmlEnabled, "html", false, "generate HTML documentation pages")
-	publishCmd.Flags().StringVar(&htmlIndexFile, "html-index", "index.html", "filename for HTML index pages")
-	publishCmd.Flags().BoolVar(&gzipEnabled, "gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
+	publishCmd.Flags().Bool("html", false, "generate HTML documentation pages")
+	publishCmd.Flags().String("html-index", "index.html", "filename for HTML index pages")
+	publishCmd.Flags().Bool("gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
+	publishCmd.Flags().Bool("terraform-docs", false, "generate terraform-docs output in HTML pages")
 	rootCmd.AddCommand(publishCmd)
 }
 
 func runPublish(cmd *cobra.Command, args []string) error {
 	if cfg.BaseURL == "" {
 		return fmt.Errorf("--base-url is required (or set TFR_BASE_URL)")
+	}
+
+	// Resolve invalidation flags with env fallback
+	if invalidationFile == "" {
+		invalidationFile = os.Getenv("TFR_INVALIDATION_FILE")
+	}
+	if !cmd.Flags().Lookup("invalidation-format").Changed {
+		if env := os.Getenv("TFR_INVALIDATION_FORMAT"); env != "" {
+			invalidationFormatS = env
+		}
+	}
+
+	// --dev is mutually exclusive with --tag and --all, but compatible with --module
+	if publishDev {
+		if publishTag != "" {
+			return fmt.Errorf("--dev and --tag are mutually exclusive")
+		}
+		if publishAll {
+			return fmt.Errorf("--dev and --all are mutually exclusive")
+		}
+		return runPublishDev(cmd)
 	}
 
 	flagCount := 0
@@ -70,7 +95,7 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		flagCount++
 	}
 	if flagCount == 0 {
-		return fmt.Errorf("one of --tag, --module, or --all is required")
+		return fmt.Errorf("one of --tag, --module, --all, or --dev is required")
 	}
 	if flagCount > 1 {
 		return fmt.Errorf("only one of --tag, --module, or --all may be specified")
@@ -108,14 +133,20 @@ func runPublish(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("generating service discovery: %w", err)
 		}
 
-		if htmlEnabled {
-			if err := generateHTML(gitRunner, cfg.OutputDir, htmlIndexFile); err != nil {
+		if cfg.HTML {
+			repoRoot, _ := gitRunner.TopLevel()
+			reader := registry.GitReadmeReader(gitRunner)
+			if cfg.TerraformDocs && repoRoot != "" {
+				reader = registry.EnrichedReadmeReader(reader, repoRoot)
+			}
+			grouped := groupedFromGit(gitRunner)
+			if err := generateHTML(gitRunner, cfg.OutputDir, cfg.HTMLIndex, reader, grouped); err != nil {
 				return fmt.Errorf("generating HTML documentation: %w", err)
 			}
 			fmt.Println("HTML documentation generated")
 		}
 
-		if gzipEnabled {
+		if cfg.Gzip {
 			count, err := registry.GzipTextFiles(cfg.OutputDir)
 			if err != nil {
 				return fmt.Errorf("gzip compressing files: %w", err)
@@ -275,18 +306,120 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 	return paths, nil
 }
 
-func generateHTML(gitRunner *git.Runner, outputDir, indexFile string) error {
-	tags, err := gitRunner.ListTags()
+func runPublishDev(cmd *cobra.Command) error {
+	gitRunner := git.NewRunner(cfg.RepoPath)
+	repoRoot, err := gitRunner.TopLevel()
 	if err != nil {
-		return fmt.Errorf("listing tags: %w", err)
+		return fmt.Errorf("resolving repository root: %w", err)
 	}
-	allParsed := module.ParseAllTags(tags)
-	if len(allParsed) == 0 {
+
+	modules, err := module.DiscoverModules(repoRoot)
+	if err != nil {
+		return fmt.Errorf("discovering modules: %w", err)
+	}
+
+	if publishModule != "" {
+		var filtered []module.Module
+		for _, m := range modules {
+			if m.Path == publishModule {
+				filtered = append(filtered, m)
+			}
+		}
+		if len(filtered) == 0 {
+			return fmt.Errorf("module %q not found in working tree", publishModule)
+		}
+		modules = filtered
+	}
+
+	if len(modules) == 0 {
+		return fmt.Errorf("no modules found in repository")
+	}
+
+	devVersion := semver.MustParse("0.0.0-dev")
+	publisher := registry.NewPublisher(gitRunner, cfg.OutputDir, cfg.BaseURL, cfg.ModulesPath)
+
+	if dryRun {
+		for _, m := range modules {
+			fmt.Printf("[dry-run] Would publish %s version 0.0.0-dev from working tree\n", m.Path)
+		}
 		return nil
 	}
-	grouped := module.GroupTagsByModule(allParsed)
+
+	for _, m := range modules {
+		fmt.Printf("Publishing %s version 0.0.0-dev from working tree...\n", m.Path)
+		if err := publisher.PublishVersionFromWorkTree(repoRoot, m.Path, devVersion); err != nil {
+			return fmt.Errorf("publishing %s: %w", m.Path, err)
+		}
+
+		// Generate versions.json with real tagged versions + dev
+		versions, err := collectModuleVersions(gitRunner, m.Path)
+		if err != nil {
+			versions = nil // no tags yet is fine
+		}
+		versions = append(versions, devVersion)
+		if err := publisher.GenerateVersionsJSON(m.Path, versions); err != nil {
+			return fmt.Errorf("generating versions.json for %s: %w", m.Path, err)
+		}
+	}
+
+	if err := publisher.GenerateServiceDiscovery(); err != nil {
+		return fmt.Errorf("generating service discovery: %w", err)
+	}
+
+	if cfg.HTML {
+		// Build grouped TagInfo from real tags + dev entries
+		grouped := groupedFromGit(gitRunner)
+		if grouped == nil {
+			grouped = make(map[string][]module.TagInfo)
+		}
+
+		// Add dev entries for published modules
+		for _, m := range modules {
+			grouped[m.Path] = append(grouped[m.Path], module.TagInfo{
+				Tag:        m.Path + "-0.0.0-dev",
+				ModulePath: m.Path,
+				Version:    devVersion,
+			})
+		}
+
+		reader := registry.FilesystemReadmeReader(repoRoot)
+		if cfg.TerraformDocs {
+			reader = registry.EnrichedReadmeReader(reader, repoRoot)
+		}
+		if err := generateHTML(gitRunner, cfg.OutputDir, cfg.HTMLIndex, reader, grouped); err != nil {
+			return fmt.Errorf("generating HTML documentation: %w", err)
+		}
+		fmt.Println("HTML documentation generated")
+	}
+
+	if cfg.Gzip {
+		count, err := registry.GzipTextFiles(cfg.OutputDir)
+		if err != nil {
+			return fmt.Errorf("gzip compressing files: %w", err)
+		}
+		fmt.Printf("Gzip-compressed %d text files\n", count)
+	}
+
+	fmt.Printf("\nPublished %d modules as 0.0.0-dev\n", len(modules))
+	return nil
+}
+
+func generateHTML(gitRunner *git.Runner, outputDir, indexFile string, reader registry.ReadmeReader, grouped map[string][]module.TagInfo) error {
+	if len(grouped) == 0 {
+		return nil
+	}
 	gen := registry.NewHTMLGenerator(gitRunner, outputDir, indexFile)
+	gen.ReadmeReader = reader
 	return gen.GenerateAll(grouped)
+}
+
+func groupedFromGit(gitRunner *git.Runner) map[string][]module.TagInfo {
+	tags, err := gitRunner.ListTags()
+	if err != nil {
+		return nil
+	}
+	allParsed := module.ParseAllTags(tags)
+	return module.GroupTagsByModule(allParsed)
 }
 
 func collectModuleVersions(gitRunner *git.Runner, modulePath string) ([]*semver.Version, error) {

@@ -357,6 +357,35 @@ func TestGenerateServiceDiscovery_CustomPath(t *testing.T) {
 	}
 }
 
+func TestPublishVersionFromWorkTree(t *testing.T) {
+	repoPath, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	outputDir := t.TempDir()
+	pub := NewPublisher(nil, outputDir, "https://registry.example.com", "/")
+
+	version := semver.MustParse("0.0.0-dev")
+	if err := pub.PublishVersionFromWorkTree(repoPath, "hetzner/server", version); err != nil {
+		t.Fatalf("PublishVersionFromWorkTree() error: %v", err)
+	}
+
+	// Check archive exists
+	archivePath := filepath.Join(outputDir, "hetzner/server/0.0.0-dev/module.tar.gz")
+	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
+		t.Error("archive file not created")
+	}
+
+	// Check download file
+	downloadPath := filepath.Join(outputDir, "hetzner/server/0.0.0-dev/download")
+	data, err := os.ReadFile(downloadPath)
+	if err != nil {
+		t.Fatalf("reading download file: %v", err)
+	}
+	if !strings.Contains(string(data), "0.0.0-dev") {
+		t.Error("download file should reference 0.0.0-dev version")
+	}
+}
+
 func TestModulesPathNormalization(t *testing.T) {
 	tests := []struct {
 		input string

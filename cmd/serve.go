@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/Heldroe/tfr-static/internal/git"
@@ -30,8 +31,13 @@ swap the registry domain to localhost and test local changes without tagging.`,
 }
 
 func init() {
-	serveCmd.Flags().StringVar(&serveAddr, "addr", "localhost:8080", "address to listen on")
+	defaultAddr := "localhost:8080"
+	if env := os.Getenv("TFR_ADDR"); env != "" {
+		defaultAddr = env
+	}
+	serveCmd.Flags().StringVar(&serveAddr, "addr", defaultAddr, "address to listen on")
 	serveCmd.Flags().BoolVar(&serveDev, "dev", false, "dev mode: serve current working tree for all versions")
+	serveCmd.Flags().Bool("html", false, "enable HTML documentation pages in dev mode")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -56,9 +62,11 @@ func runServeDev() error {
 	}
 
 	dev := registry.NewDevServer(gitRunner, repoRoot, cfg.ModulesPath)
+	dev.HTMLEnabled = true // always show HTML in dev mode
 
 	log.Printf("Dev registry serving from %s on %s", repoRoot, serveAddr)
 	log.Printf("Modules are served from the current working tree (including uncommitted changes)")
 	log.Printf("All version requests return the current code regardless of version")
+	log.Printf("HTML documentation enabled")
 	return http.ListenAndServe(serveAddr, dev.Handler())
 }

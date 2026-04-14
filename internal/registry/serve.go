@@ -2,6 +2,7 @@ package registry
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	"github.com/Heldroe/tfr-static/internal/git"
 	"github.com/Heldroe/tfr-static/internal/module"
 )
@@ -24,6 +26,7 @@ type DevServer struct {
 	Git         *git.Runner
 	RepoRoot    string
 	ModulesPath string
+	HTMLEnabled bool
 }
 
 // NewDevServer creates a DevServer.
@@ -71,7 +74,11 @@ func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, ".tar.gz"):
 		s.handleArchive(w, r, path)
 	default:
-		http.NotFound(w, r)
+		if s.HTMLEnabled {
+			s.handleHTMLPage(w, r, path)
+		} else {
+			http.NotFound(w, r)
+		}
 	}
 }
 
@@ -181,6 +188,104 @@ func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, path s
 		http.Error(w, "failed to build archive", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path string) {
+	path = strings.TrimSuffix(path, "/")
+
+	reader := FilesystemReadmeReader(s.RepoRoot)
+
+	// Root page: list all modules
+	if path == "" {
+		modules, err := module.DiscoverModules(s.RepoRoot)
+		if err != nil {
+			http.Error(w, "failed to discover modules", http.StatusInternalServerError)
+			return
+		}
+		var entries []rootModuleEntry
+		for _, m := range modules {
+			tags, _ := s.Git.ListTags()
+			allParsed := module.ParseAllTags(tags)
+			moduleTags := module.FilterTagsForModule(allParsed, m.Path)
+			latest := module.LatestVersion(moduleTags)
+			latestStr := "0.0.0-dev"
+			if latest != nil {
+				latestStr = latest.Version.Original()
+			}
+			entries = append(entries, rootModuleEntry{
+				Path:          m.Path,
+				LatestVersion: latestStr,
+				VersionCount:  len(moduleTags) + 1, // +1 for dev
+			})
+		}
+		var buf bytes.Buffer
+		if err := rootTmpl.Execute(&buf, rootPageData{Modules: entries}); err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(buf.Bytes())
+		return
+	}
+
+	// Check if this is a version page (last segment is a semver or "0.0.0-dev")
+	lastSlash := strings.LastIndex(path, "/")
+	if lastSlash != -1 {
+		possibleModule := path[:lastSlash]
+		possibleVersion := path[lastSlash+1:]
+		if _, err := semver.StrictNewVersion(possibleVersion); err == nil {
+			if s.moduleExists(possibleModule) {
+				readmeHTML := renderMarkdown(reader(possibleModule, ""))
+				archiveFile := "module.tar.gz"
+				data := versionPageData{
+					ModulePath:          possibleModule,
+					Version:             possibleVersion,
+					ArchiveURL:          archiveFile,
+					ArchiveDownloadName: descriptiveArchiveNameFromParts(possibleModule, possibleVersion),
+					ReadmeHTML:          readmeHTML,
+				}
+				var buf bytes.Buffer
+				if err := versionTmpl.Execute(&buf, data); err != nil {
+					http.Error(w, "template error", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "text/html")
+				w.Write(buf.Bytes())
+				return
+			}
+		}
+	}
+
+	// Module page
+	if s.moduleExists(path) {
+		tags, _ := s.Git.ListTags()
+		allParsed := module.ParseAllTags(tags)
+		moduleTags := module.FilterTagsForModule(allParsed, path)
+		module.SortVersionsDesc(moduleTags)
+
+		var versions []string
+		for _, t := range moduleTags {
+			versions = append(versions, t.Version.Original())
+		}
+		versions = append(versions, "0.0.0-dev")
+
+		readmeHTML := renderMarkdown(reader(path, ""))
+		data := modulePageData{
+			ModulePath: path,
+			Versions:   versions,
+			ReadmeHTML: readmeHTML,
+		}
+		var buf bytes.Buffer
+		if err := moduleTmpl.Execute(&buf, data); err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(buf.Bytes())
+		return
+	}
+
+	http.NotFound(w, r)
 }
 
 func (s *DevServer) moduleExists(modulePath string) bool {

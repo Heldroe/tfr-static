@@ -159,6 +159,140 @@ func TestHTMLGenerator_BackLinks(t *testing.T) {
 	assertFileContains(t, verIndex, `href="../"`)
 }
 
+func TestHTMLGenerator_WithFilesystemReader(t *testing.T) {
+	repoPath, gitRunner := setupHTMLTestRepo(t)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+	gen.ReadmeReader = FilesystemReadmeReader(repoPath)
+
+	grouped := map[string][]module.TagInfo{
+		"hetzner/server": {
+			{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+		},
+	}
+
+	if err := gen.GenerateAll(grouped); err != nil {
+		t.Fatal(err)
+	}
+
+	modIndex := filepath.Join(outputDir, "hetzner", "server", "index.html")
+	assertFileContains(t, modIndex, "Hetzner Server")
+	assertFileContains(t, modIndex, "<strong>server</strong>")
+}
+
+func TestHTMLGenerator_VersionReadmeFromTag(t *testing.T) {
+	// Verify that version pages read README from their specific tag, not the latest.
+	tmpDir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+
+	run("init", "-b", "main")
+
+	modDir := filepath.Join(tmpDir, "mymod")
+	os.MkdirAll(modDir, 0o755)
+	os.WriteFile(filepath.Join(modDir, "main.tf"), []byte(`resource "null" "x" {}`), 0o644)
+	os.WriteFile(filepath.Join(modDir, "README.md"), []byte("# Version ONE readme"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "v1")
+	run("tag", "-a", "mymod-1.0.0", "-m", "v1.0.0")
+
+	// Update README and tag v2
+	os.WriteFile(filepath.Join(modDir, "README.md"), []byte("# Version TWO readme"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "v2")
+	run("tag", "-a", "mymod-2.0.0", "-m", "v2.0.0")
+
+	gitRunner := git.NewRunner(tmpDir)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+	gen.ReadmeReader = GitReadmeReader(gitRunner)
+
+	grouped := map[string][]module.TagInfo{
+		"mymod": {
+			{Tag: "mymod-2.0.0", ModulePath: "mymod", Version: semver.MustParse("2.0.0")},
+			{Tag: "mymod-1.0.0", ModulePath: "mymod", Version: semver.MustParse("1.0.0")},
+		},
+	}
+
+	if err := gen.GenerateAll(grouped); err != nil {
+		t.Fatal(err)
+	}
+
+	// v1 version page should have "Version ONE"
+	v1Index := filepath.Join(outputDir, "mymod", "1.0.0", "index.html")
+	assertFileContains(t, v1Index, "Version ONE")
+	assertFileNotContains(t, v1Index, "Version TWO")
+
+	// v2 version page should have "Version TWO"
+	v2Index := filepath.Join(outputDir, "mymod", "2.0.0", "index.html")
+	assertFileContains(t, v2Index, "Version TWO")
+	assertFileNotContains(t, v2Index, "Version ONE")
+
+	// Module index (latest) should have "Version TWO"
+	modIndex := filepath.Join(outputDir, "mymod", "index.html")
+	assertFileContains(t, modIndex, "Version TWO")
+}
+
+func TestHTMLGenerator_DevVersionIncluded(t *testing.T) {
+	repoPath, gitRunner := setupHTMLTestRepo(t)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+	gen.ReadmeReader = FilesystemReadmeReader(repoPath)
+
+	// Simulate what publish --dev does: real tags + dev entry
+	grouped := map[string][]module.TagInfo{
+		"hetzner/server": {
+			{Tag: "hetzner/server-1.1.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.1.0")},
+			{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+			{Tag: "hetzner/server-0.0.0-dev", ModulePath: "hetzner/server", Version: semver.MustParse("0.0.0-dev")},
+		},
+	}
+
+	if err := gen.GenerateAll(grouped); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root index should list the module
+	rootIndex := filepath.Join(outputDir, "index.html")
+	assertFileContains(t, rootIndex, "hetzner/server")
+	assertFileContains(t, rootIndex, "3") // 3 versions
+
+	// Module page should list dev version
+	modIndex := filepath.Join(outputDir, "hetzner", "server", "index.html")
+	assertFileContains(t, modIndex, "0.0.0-dev")
+	assertFileContains(t, modIndex, "1.1.0")
+
+	// Dev version page should exist
+	devIndex := filepath.Join(outputDir, "hetzner", "server", "0.0.0-dev", "index.html")
+	assertFileContains(t, devIndex, "0.0.0-dev")
+	assertFileContains(t, devIndex, "hetzner/server")
+}
+
+func TestRenderMarkdown_Tables(t *testing.T) {
+	input := "| Name | Type |\n|------|------|\n| foo | string |"
+	result := string(renderMarkdown(input))
+	if !strings.Contains(result, "<table>") {
+		t.Errorf("expected <table> in rendered output, got:\n%s", result)
+	}
+	if !strings.Contains(result, "<td>foo</td>") {
+		t.Errorf("expected table cell with 'foo', got:\n%s", result)
+	}
+}
+
 func assertFileContains(t *testing.T, path, substr string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

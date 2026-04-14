@@ -126,6 +126,39 @@ func (p *Publisher) PublishVersion(tag module.TagInfo) error {
 	return nil
 }
 
+// PublishVersionFromWorkTree generates all files for a module version using
+// the current filesystem (working tree) instead of a git tag.
+func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, version *semver.Version) error {
+	versionDir := filepath.Join(p.OutputDir, modulePath, version.Original())
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		return fmt.Errorf("creating version directory: %w", err)
+	}
+
+	// Generate archive from working tree
+	archiveFile := archiveName(modulePath, version)
+	archivePath := filepath.Join(versionDir, archiveFile)
+	f, err := os.Create(archivePath)
+	if err != nil {
+		return fmt.Errorf("creating archive file: %w", err)
+	}
+	if err := buildArchiveFromWorkTree(repoRoot, modulePath, f); err != nil {
+		f.Close()
+		return fmt.Errorf("building archive for %s: %w", modulePath, err)
+	}
+	f.Close()
+
+	// Generate download HTML
+	archiveURL := fmt.Sprintf("%s/%s/%s/%s",
+		p.BaseURL, modulePath, version.Original(), archiveFile)
+	downloadHTML := generateDownloadHTML(archiveURL)
+	downloadPath := filepath.Join(versionDir, "download")
+	if err := os.WriteFile(downloadPath, []byte(downloadHTML), 0o644); err != nil {
+		return fmt.Errorf("writing download file: %w", err)
+	}
+
+	return nil
+}
+
 // GenerateVersionsJSON creates the versions.json file for a module.
 func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.Version) error {
 	moduleDir := filepath.Join(p.OutputDir, modulePath)

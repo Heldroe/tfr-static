@@ -1,0 +1,101 @@
+package docs
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/terraform-docs/terraform-docs/format"
+	"github.com/terraform-docs/terraform-docs/print"
+	"github.com/terraform-docs/terraform-docs/terraform"
+)
+
+const (
+	beginMarker = "<!-- BEGIN_TF_DOCS -->"
+	endMarker   = "<!-- END_TF_DOCS -->"
+)
+
+// Generate produces terraform-docs markdown table output for a module directory.
+func Generate(moduleDir string) (string, error) {
+	if !hasTFFiles(moduleDir) {
+		return "", nil
+	}
+
+	config := print.DefaultConfig()
+	config.ModuleRoot = moduleDir
+	config.Formatter = "markdown table"
+
+	// Try to load .terraform-docs.yml from the module dir
+	if cfgFile := findConfig(moduleDir); cfgFile != "" {
+		if fileCfg, err := print.ReadConfig(filepath.Dir(cfgFile), filepath.Base(cfgFile)); err == nil {
+			fileCfg.ModuleRoot = moduleDir
+			if fileCfg.Formatter == "" {
+				fileCfg.Formatter = "markdown table"
+			}
+			config = fileCfg
+		}
+	}
+
+	config.Parse()
+
+	module, err := terraform.LoadWithOptions(config)
+	if err != nil {
+		return "", fmt.Errorf("loading terraform module from %s: %w", moduleDir, err)
+	}
+
+	formatter, err := format.New(config)
+	if err != nil {
+		return "", fmt.Errorf("creating formatter: %w", err)
+	}
+
+	if err := formatter.Generate(module); err != nil {
+		return "", fmt.Errorf("generating docs: %w", err)
+	}
+
+	return strings.TrimSpace(formatter.Content()), nil
+}
+
+// InjectIntoReadme injects terraform-docs output into a README string.
+// If the README contains BEGIN/END markers, content between them is replaced.
+// Otherwise the docs are appended.
+func InjectIntoReadme(readme, docs string) string {
+	if docs == "" {
+		return readme
+	}
+
+	beginIdx := strings.Index(readme, beginMarker)
+	endIdx := strings.Index(readme, endMarker)
+
+	if beginIdx != -1 && endIdx != -1 && endIdx > beginIdx {
+		return readme[:beginIdx+len(beginMarker)] + "\n" + docs + "\n" + readme[endIdx:]
+	}
+
+	if readme == "" {
+		return docs
+	}
+	return readme + "\n\n" + docs
+}
+
+func findConfig(moduleDir string) string {
+	for _, name := range []string{".terraform-docs.yml", ".terraform-docs.yaml"} {
+		p := filepath.Join(moduleDir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func hasTFFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".tf" {
+			return true
+		}
+	}
+	return false
+}

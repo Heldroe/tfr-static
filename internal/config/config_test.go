@@ -9,10 +9,14 @@ import (
 func TestLoadFileConfig_AllFields(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-base_url     = "https://registry.example.com"
-main_branch  = "master"
-output_dir   = "dist"
-modules_path = "/v1/modules/"
+base_url       = "https://registry.example.com"
+main_branch    = "master"
+output_dir     = "dist"
+modules_path   = "/v1/modules/"
+html           = true
+html_index     = "docs.html"
+gzip           = true
+terraform_docs = true
 `
 	os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644)
 
@@ -34,6 +38,18 @@ modules_path = "/v1/modules/"
 	}
 	if *fc.ModulesPath != "/v1/modules/" {
 		t.Errorf("ModulesPath = %q", *fc.ModulesPath)
+	}
+	if fc.HTML == nil || !*fc.HTML {
+		t.Error("HTML should be true")
+	}
+	if *fc.HTMLIndex != "docs.html" {
+		t.Errorf("HTMLIndex = %q", *fc.HTMLIndex)
+	}
+	if fc.Gzip == nil || !*fc.Gzip {
+		t.Error("Gzip should be true")
+	}
+	if fc.TerraformDocs == nil || !*fc.TerraformDocs {
+		t.Error("TerraformDocs should be true")
 	}
 }
 

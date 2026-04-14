@@ -393,6 +393,109 @@ func extractTerraformGetURL(html string) string {
 	return html[start : start+end]
 }
 
+func TestDevServer_HTML_RootPage(t *testing.T) {
+	repoPath, gitRunner := setupDevTestRepo(t)
+	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev.HTMLEnabled = true
+	srv := httptest.NewServer(dev.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+	if !strings.Contains(content, "Terraform Module Registry") {
+		t.Error("root page should contain registry title")
+	}
+	if !strings.Contains(content, "hetzner/server") {
+		t.Error("root page should list hetzner/server module")
+	}
+}
+
+func TestDevServer_HTML_ModulePage(t *testing.T) {
+	repoPath, gitRunner := setupDevTestRepo(t)
+
+	// Add a README to the module
+	os.WriteFile(filepath.Join(repoPath, "hetzner", "server", "README.md"), []byte("# Server Module"), 0o644)
+
+	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev.HTMLEnabled = true
+	srv := httptest.NewServer(dev.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/hetzner/server/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+	if !strings.Contains(content, "hetzner/server") {
+		t.Error("module page should contain module path")
+	}
+	if !strings.Contains(content, "Server Module") {
+		t.Error("module page should contain README content")
+	}
+	if !strings.Contains(content, "0.0.0-dev") {
+		t.Error("module page should list dev version")
+	}
+}
+
+func TestDevServer_HTML_VersionPage(t *testing.T) {
+	repoPath, gitRunner := setupDevTestRepo(t)
+	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev.HTMLEnabled = true
+	srv := httptest.NewServer(dev.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/hetzner/server/1.0.0/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	content := string(body)
+	if !strings.Contains(content, "hetzner/server") {
+		t.Error("version page should contain module path")
+	}
+	if !strings.Contains(content, "1.0.0") {
+		t.Error("version page should contain version")
+	}
+}
+
+func TestDevServer_HTML_Disabled(t *testing.T) {
+	repoPath, gitRunner := setupDevTestRepo(t)
+	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev.HTMLEnabled = false
+	srv := httptest.NewServer(dev.Handler())
+	defer srv.Close()
+
+	resp, _ := http.Get(srv.URL + "/")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Errorf("expected 404 when HTML disabled, got %d", resp.StatusCode)
+	}
+}
+
 func TestBuildArchiveFromWorkTree(t *testing.T) {
 	dir := t.TempDir()
 	modDir := filepath.Join(dir, "my", "module")

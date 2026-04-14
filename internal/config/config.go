@@ -12,19 +12,27 @@ const ConfigFileName = ".tfr-static.hcl"
 
 // FileConfig represents the HCL config file structure.
 type FileConfig struct {
-	BaseURL     *string `hcl:"base_url,optional"`
-	MainBranch  *string `hcl:"main_branch,optional"`
-	OutputDir   *string `hcl:"output_dir,optional"`
-	ModulesPath *string `hcl:"modules_path,optional"`
+	BaseURL      *string `hcl:"base_url,optional"`
+	MainBranch   *string `hcl:"main_branch,optional"`
+	OutputDir    *string `hcl:"output_dir,optional"`
+	ModulesPath  *string `hcl:"modules_path,optional"`
+	HTML         *bool   `hcl:"html,optional"`
+	HTMLIndex    *string `hcl:"html_index,optional"`
+	Gzip         *bool   `hcl:"gzip,optional"`
+	TerraformDocs *bool  `hcl:"terraform_docs,optional"`
 }
 
 // Config holds the resolved configuration for tfr-static.
 type Config struct {
-	OutputDir   string
-	BaseURL     string
-	RepoPath    string
-	MainBranch  string
-	ModulesPath string // Path prefix for modules.v1 in service discovery (default: "/")
+	OutputDir     string
+	BaseURL       string
+	RepoPath      string
+	MainBranch    string
+	ModulesPath   string // Path prefix for modules.v1 in service discovery (default: "/")
+	HTML          bool
+	HTMLIndex     string
+	Gzip          bool
+	TerraformDocs bool
 }
 
 // LoadFileConfig reads the .tfr-static.hcl config file from the given directory.

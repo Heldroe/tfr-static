@@ -10,16 +10,73 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/Heldroe/tfr-static/internal/docs"
 	"github.com/Heldroe/tfr-static/internal/git"
 	"github.com/Heldroe/tfr-static/internal/module"
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
+
+// ReadmeReader returns the raw markdown content of a README for a given module path
+// and git tag. The tag is used by git-based readers to read from the correct commit.
+// Filesystem-based readers ignore the tag parameter.
+type ReadmeReader func(modulePath, tag string) string
+
+// GitReadmeReader returns a ReadmeReader that reads READMEs from the git tag
+// specified in each call.
+func GitReadmeReader(gitRunner *git.Runner) ReadmeReader {
+	return func(modulePath, tag string) string {
+		return gitReadmeContent(gitRunner, tag, modulePath)
+	}
+}
+
+func gitReadmeContent(gitRunner *git.Runner, tag, modulePath string) string {
+	content, err := gitRunner.ShowFileAtTag(tag, modulePath+"/README.md")
+	if err != nil || content == "" {
+		content, err = gitRunner.ShowFileAtTag(tag, modulePath+"/readme.md")
+		if err != nil || content == "" {
+			return ""
+		}
+	}
+	return content
+}
+
+// FilesystemReadmeReader returns a ReadmeReader that reads READMEs from the filesystem.
+// The tag parameter is ignored.
+func FilesystemReadmeReader(repoRoot string) ReadmeReader {
+	return func(modulePath, tag string) string {
+		dir := filepath.Join(repoRoot, modulePath)
+		content, err := os.ReadFile(filepath.Join(dir, "README.md"))
+		if err != nil {
+			content, err = os.ReadFile(filepath.Join(dir, "readme.md"))
+			if err != nil {
+				return ""
+			}
+		}
+		return string(content)
+	}
+}
+
+// EnrichedReadmeReader wraps a base ReadmeReader and enriches the output
+// with terraform-docs generated documentation.
+func EnrichedReadmeReader(base ReadmeReader, repoRoot string) ReadmeReader {
+	return func(modulePath, tag string) string {
+		readme := base(modulePath, tag)
+		moduleDir := filepath.Join(repoRoot, modulePath)
+		docsOutput, err := docs.Generate(moduleDir)
+		if err != nil || docsOutput == "" {
+			return readme
+		}
+		return docs.InjectIntoReadme(readme, docsOutput)
+	}
+}
 
 // HTMLGenerator creates HTML documentation pages for the registry.
 type HTMLGenerator struct {
-	Git       *git.Runner
-	OutputDir string
-	IndexFile string
+	Git          *git.Runner
+	OutputDir    string
+	IndexFile    string
+	ReadmeReader ReadmeReader
 }
 
 // NewHTMLGenerator creates a new HTMLGenerator.
@@ -132,10 +189,10 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 		versions[i] = t.Version.Original()
 	}
 
-	// Try to get README from the latest version's tag
+	// Module index uses the latest (first after sort) tag's README
 	var readmeHTML template.HTML
 	if len(tags) > 0 {
-		readmeHTML = g.renderReadme(tags[0].Tag, modPath)
+		readmeHTML = renderMarkdown(g.readReadme(modPath, tags[0].Tag))
 	}
 
 	data := modulePageData{
@@ -151,7 +208,8 @@ func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 	archiveFile := archiveName(tag.ModulePath, tag.Version)
 	archiveURL := archiveFile
 
-	readmeHTML := g.renderReadme(tag.Tag, tag.ModulePath)
+	// Each version page reads README from its own tag
+	readmeHTML := renderMarkdown(g.readReadme(tag.ModulePath, tag.Tag))
 
 	data := versionPageData{
 		ModulePath:          tag.ModulePath,
@@ -164,18 +222,25 @@ func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 	return g.writeTemplate(filepath.Join(dir, g.IndexFile), versionTmpl, data)
 }
 
-func (g *HTMLGenerator) renderReadme(tag, modPath string) template.HTML {
-	content, err := g.Git.ShowFileAtTag(tag, modPath+"/README.md")
-	if err != nil || content == "" {
-		// Try lowercase
-		content, err = g.Git.ShowFileAtTag(tag, modPath+"/readme.md")
-		if err != nil || content == "" {
-			return ""
-		}
+// readReadme returns the raw README content for a module, using the ReadmeReader
+// if set, otherwise falling back to reading directly from the git tag.
+func (g *HTMLGenerator) readReadme(modulePath, tag string) string {
+	if g.ReadmeReader != nil {
+		return g.ReadmeReader(modulePath, tag)
 	}
+	return gitReadmeContent(g.Git, tag, modulePath)
+}
 
+var md = goldmark.New(
+	goldmark.WithExtensions(extension.Table),
+)
+
+func renderMarkdown(content string) template.HTML {
+	if content == "" {
+		return ""
+	}
 	var buf bytes.Buffer
-	if err := goldmark.Convert([]byte(content), &buf); err != nil {
+	if err := md.Convert([]byte(content), &buf); err != nil {
 		return ""
 	}
 	return template.HTML(buf.String())

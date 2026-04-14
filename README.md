@@ -60,10 +60,14 @@ Configuration is resolved with the following precedence: **CLI flags > environme
 Place a `.tfr-static.hcl` file at the root of your modules repository:
 
 ```hcl
-base_url     = "https://registry.example.com"
-main_branch  = "main"
-output_dir   = "target"
-modules_path = "/"
+base_url       = "https://registry.example.com"
+main_branch    = "main"
+output_dir     = "target"
+modules_path   = "/"
+html           = true
+html_index     = "index.html"
+gzip           = true
+terraform_docs = true
 ```
 
 All fields are optional. Unknown fields will cause an error to catch typos early.
@@ -87,6 +91,13 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_OUTPUT_DIR` | `--output-dir` |
 | `TFR_MODULES_PATH` | `--modules-path` |
 | `TFR_REPO_PATH` | `--repo` |
+| `TFR_HTML` | `--html` |
+| `TFR_HTML_INDEX` | `--html-index` |
+| `TFR_GZIP` | `--gzip` |
+| `TFR_TERRAFORM_DOCS` | `--terraform-docs` |
+| `TFR_INVALIDATION_FILE` | `--invalidation-file` |
+| `TFR_INVALIDATION_FORMAT` | `--invalidation-format` |
+| `TFR_ADDR` | `--addr` (serve) |
 
 ## Commands
 
@@ -107,6 +118,12 @@ tfr-static publish --module hetzner/server
 # Regenerate everything (full rebuild)
 tfr-static publish --all
 
+# Publish from working tree as 0.0.0-dev (dev mode)
+tfr-static publish --dev
+
+# Publish a single module from working tree
+tfr-static publish --dev --module hetzner/server
+
 # Preview what would be generated
 tfr-static publish --all --dry-run
 
@@ -121,6 +138,9 @@ tfr-static publish --tag hetzner/server-1.0.0 \
 # Publish with HTML documentation
 tfr-static publish --all --html
 
+# Publish with HTML documentation including terraform-docs output
+tfr-static publish --all --html --terraform-docs
+
 # Pre-compress text files for S3 upload
 tfr-static publish --all --gzip
 ```
@@ -132,6 +152,7 @@ tfr-static publish --all --gzip
 | `--tag` | Publish a single version. Generates the archive, download page, and an updated `versions.json`. |
 | `--module` | Rebuild all versions of a module by iterating through its git tags. `versions.json` is generated once at the end. |
 | `--all` | Rebuild all versions of all modules. |
+| `--dev` | Publish modules from the current working tree as version `0.0.0-dev`. Compatible with `--module` to filter. Mutually exclusive with `--tag` and `--all`. |
 | `--dry-run` | Show what would be generated and which paths would need CDN invalidation. |
 
 | Flag | Description | Default |
@@ -140,6 +161,7 @@ tfr-static publish --all --gzip
 | `--invalidation-format` | Format of the invalidation file: `txt`, `json`, `cloudfront` | `txt` |
 | `--html` | Generate HTML documentation pages for browsing modules | `false` |
 | `--html-index` | Filename for HTML index pages | `index.html` |
+| `--terraform-docs` | Enrich HTML pages with auto-generated terraform-docs output (inputs, outputs, etc.) | `false` |
 | `--gzip` | Gzip-compress text files for pre-compressed upload to S3 | `false` |
 
 When using `--module` or `--all`, the tool iterates through git tag history. This means deleted modules (no longer in the current tree but still tagged) are still published correctly.
@@ -213,6 +235,16 @@ If a module directory contains a `README.md` next to its `.tf` files, the README
 
 Use `--html-index` to change the filename (e.g. `--html-index docs.html`).
 
+#### terraform-docs integration
+
+The `--terraform-docs` flag automatically generates documentation for each module's inputs, outputs, providers, and resources using [terraform-docs](https://terraform-docs.io/) and injects it into the HTML pages.
+
+```bash
+tfr-static publish --all --html --terraform-docs
+```
+
+If a module's `README.md` contains `<!-- BEGIN_TF_DOCS -->` / `<!-- END_TF_DOCS -->` markers, the generated documentation replaces the content between them. Otherwise it is appended to the README. Modules can also include a `.terraform-docs.yml` or `.terraform-docs.yaml` file to customize the output format.
+
 #### Pre-compressed upload with `--gzip`
 
 The `--gzip` flag gzip-compresses all text files (HTML, JSON, `download` pages) in the output directory. Archives (`.tar.gz`) are left untouched since they are already compressed.
@@ -284,7 +316,7 @@ tfr-static serve --dev
 
 **Static mode** (default) serves the output directory as-is, acting as if it were the remote CDN or object storage.
 
-**Dev mode** (`--dev`) is designed for local development. It dynamically serves modules from the current working tree, including uncommitted changes. Every version request returns the current code, regardless of which version was asked for. This lets you:
+**Dev mode** (`--dev`) is designed for local development. It dynamically serves modules from the current working tree, including uncommitted changes. Every version request returns the current code, regardless of which version was asked for. HTML documentation pages are always enabled in dev mode. This lets you:
 
 1. Point Terraform at `localhost:8080` instead of your production registry
 2. Keep your existing `version = "1.0.0"` constraints unchanged
@@ -295,6 +327,7 @@ In dev mode:
 - `/{module}/versions.json` returns all real tagged versions plus synthetic dev versions (`0.0.0-dev` and `99999.0.0-dev`) so that any version constraint can match
 - `/{module}/{version}/download` always points to an on-the-fly archive regardless of the requested version
 - Archives are built from the filesystem (not from git), so uncommitted changes are included
+- Browsable HTML pages are served at `/`, `/{module}/`, and `/{module}/{version}/` with README rendering
 
 | Flag | Description | Default |
 |---|---|---|

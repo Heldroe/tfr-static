@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"github.com/Heldroe/tfr-static/internal/config"
@@ -59,12 +60,17 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath *string
+	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex *string
+	var fileHTML, fileGzip, fileTerraformDocs *bool
 	if fileCfg != nil {
 		fileBaseURL = fileCfg.BaseURL
 		fileMainBranch = fileCfg.MainBranch
 		fileOutputDir = fileCfg.OutputDir
 		fileModulesPath = fileCfg.ModulesPath
+		fileHTMLIndex = fileCfg.HTMLIndex
+		fileHTML = fileCfg.HTML
+		fileGzip = fileCfg.Gzip
+		fileTerraformDocs = fileCfg.TerraformDocs
 	}
 
 	cfg.BaseURL = resolveValue(
@@ -91,6 +97,30 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileModulesPath,
 		"/",
 	)
+	cfg.HTML = resolveBoolValue(
+		boolFlagIfChanged(cmd, "html"),
+		os.Getenv("TFR_HTML"),
+		fileHTML,
+		false,
+	)
+	cfg.HTMLIndex = resolveValue(
+		flagIfChanged(cmd, "html-index"),
+		os.Getenv("TFR_HTML_INDEX"),
+		fileHTMLIndex,
+		"index.html",
+	)
+	cfg.Gzip = resolveBoolValue(
+		boolFlagIfChanged(cmd, "gzip"),
+		os.Getenv("TFR_GZIP"),
+		fileGzip,
+		false,
+	)
+	cfg.TerraformDocs = resolveBoolValue(
+		boolFlagIfChanged(cmd, "terraform-docs"),
+		os.Getenv("TFR_TERRAFORM_DOCS"),
+		fileTerraformDocs,
+		false,
+	)
 
 	return nil
 }
@@ -108,6 +138,41 @@ func flagIfChanged(cmd *cobra.Command, name string) *string {
 		return &v
 	}
 	return nil
+}
+
+// boolFlagIfChanged returns a pointer to the flag's bool value if it was
+// explicitly set by the user, or nil otherwise.
+func boolFlagIfChanged(cmd *cobra.Command, name string) *bool {
+	f := cmd.Flags().Lookup(name)
+	if f == nil {
+		return nil
+	}
+	if f.Changed {
+		v, err := strconv.ParseBool(f.Value.String())
+		if err != nil {
+			return nil
+		}
+		return &v
+	}
+	return nil
+}
+
+// resolveBoolValue picks the first set value in precedence order:
+// CLI flag > env var > config file > default.
+func resolveBoolValue(flag *bool, envVal string, fileVal *bool, defaultVal bool) bool {
+	if flag != nil {
+		return *flag
+	}
+	if envVal != "" {
+		v, err := strconv.ParseBool(envVal)
+		if err == nil {
+			return v
+		}
+	}
+	if fileVal != nil {
+		return *fileVal
+	}
+	return defaultVal
 }
 
 // resolveValue picks the first non-empty value in precedence order:
