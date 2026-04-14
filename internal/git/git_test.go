@@ -1,6 +1,8 @@
 package git
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,6 +186,43 @@ func TestArchiveModule(t *testing.T) {
 	}
 	if info.Size() == 0 {
 		t.Error("archive file is empty")
+	}
+}
+
+func TestArchiveModule_FlatStructure(t *testing.T) {
+	dir := setupRepo(t)
+	r := NewRunner(dir)
+
+	outputDir := t.TempDir()
+	destPath := filepath.Join(outputDir, "archive.tar.gz")
+
+	err := r.ArchiveModule("mymod/sub-1.0.0", "mymod/sub", destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Extract and verify files are at the root of the archive (no directory prefix)
+	f, err := os.Open(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if strings.Contains(hdr.Name, "/") {
+			t.Errorf("archive entry %q should not contain directory prefix", hdr.Name)
+		}
 	}
 }
 

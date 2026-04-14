@@ -59,19 +59,19 @@ func (r *Runner) ListTagsWithPrefix(prefix string) ([]string, error) {
 }
 
 // ArchiveModule creates a tar.gz archive of the module directory at the given
-// tag's commit. It writes to destPath.
+// tag's commit. It writes to destPath. Files are placed at the root of the
+// archive (no directory prefix).
 func (r *Runner) ArchiveModule(tag, modulePath, destPath string) error {
 	absDestPath, err := filepath.Abs(destPath)
 	if err != nil {
 		return fmt.Errorf("resolving dest path: %w", err)
 	}
-	// git archive produces a tar.gz of the subtree at the tag
+	// Use tag:path syntax so git treats the subtree as the archive root,
+	// producing flat files instead of preserving the directory prefix.
 	_, err = r.run("archive",
 		"--format=tar.gz",
 		"--output="+absDestPath,
-		tag,
-		"--",
-		modulePath,
+		tag+":"+modulePath,
 	)
 	return err
 }
