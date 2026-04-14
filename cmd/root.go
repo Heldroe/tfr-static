@@ -12,12 +12,20 @@ import (
 
 var cfg config.Config
 
+// Version is set at build time via ldflags:
+//
+//	go build -ldflags "-X github.com/Heldroe/tfr-static/cmd.Version=1.0.0"
+var Version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "tfr-static",
 	Short: "Static Terraform module registry generator",
-	Long: `tfr-static generates static files for hosting a Terraform module registry
+	Long: fmt.Sprintf(`tfr-static %s — Static Terraform module registry generator
+
+Generates static files for hosting a Terraform module registry
 on object storage (e.g. S3). It uses git tags as the source of truth for
-module versions and generates registry-protocol-compliant files.`,
+module versions and generates registry-protocol-compliant files.`, Version),
+	Version:           Version,
 	PersistentPreRunE: loadConfig,
 	SilenceUsage:      true,
 }
