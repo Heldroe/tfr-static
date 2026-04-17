@@ -60,14 +60,19 @@ Configuration is resolved with the following precedence: **CLI flags > environme
 Place a `.tfr-static.hcl` file at the root of your modules repository:
 
 ```hcl
-base_url       = "https://registry.example.com"
-main_branch    = "main"
-output_dir     = "target"
-modules_path   = "/"
-html           = true
-html_index     = "index.html"
-gzip           = true
-terraform_docs = true
+base_url                = "https://registry.example.com"
+main_branch             = "main"
+output_dir              = "target"
+modules_path            = "/"
+html                    = true
+html_index              = "index.html"
+gzip                    = true
+terraform_docs          = true
+invalidation_file       = "invalidation.json"
+invalidation_format     = "cloudfront"
+invalidation_full_url   = true
+invalidation_base_url   = "https://cdn.example.com"
+invalidation_url_encode = false
 ```
 
 All fields are optional. Unknown fields will cause an error to catch typos early.
@@ -97,6 +102,9 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_TERRAFORM_DOCS` | `--terraform-docs` |
 | `TFR_INVALIDATION_FILE` | `--invalidation-file` |
 | `TFR_INVALIDATION_FORMAT` | `--invalidation-format` |
+| `TFR_INVALIDATION_FULL_URL` | `--invalidation-full-url` |
+| `TFR_INVALIDATION_BASE_URL` | `--invalidation-base-url` |
+| `TFR_INVALIDATION_URL_ENCODE` | `--invalidation-url-encode` |
 | `TFR_ADDR` | `--addr` (serve) |
 
 ## Commands
@@ -159,6 +167,9 @@ tfr-static publish --all --gzip
 |---|---|---|
 | `--invalidation-file` | Write invalidation paths to this file | *(disabled)* |
 | `--invalidation-format` | Format of the invalidation file: `txt`, `json`, `cloudfront` | `txt` |
+| `--invalidation-full-url` | Prepend the base URL to invalidation paths | `false` |
+| `--invalidation-base-url` | Override the base URL used for invalidation paths (requires `--invalidation-full-url`) | *(uses `--base-url`)* |
+| `--invalidation-url-encode` | URL-encode the full invalidation paths (for use as query parameters) | `false` |
 | `--html` | Generate HTML documentation pages for browsing modules | `false` |
 | `--html-index` | Filename for HTML index pages | `index.html` |
 | `--terraform-docs` | Enrich HTML pages with auto-generated terraform-docs output (inputs, outputs, etc.) | `false` |
