@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/spf13/cobra"
@@ -19,6 +22,9 @@ var (
 	dryRun              bool
 	invalidationFile    string
 	invalidationFormatS string
+	invalidationFullURL    bool
+	invalidationBaseURL    string
+	invalidationURLEncode  bool
 )
 
 var publishCmd = &cobra.Command{
@@ -51,6 +57,9 @@ func init() {
 	publishCmd.Flags().BoolVar(&dryRun, "dry-run", false, "only show what would be done (including invalidations)")
 	publishCmd.Flags().StringVar(&invalidationFile, "invalidation-file", "", "write invalidation paths to this file")
 	publishCmd.Flags().StringVar(&invalidationFormatS, "invalidation-format", "txt", "format of the invalidation file: txt, json, cloudfront")
+	publishCmd.Flags().BoolVar(&invalidationFullURL, "invalidation-full-url", false, "prepend the base URL to invalidation paths")
+	publishCmd.Flags().StringVar(&invalidationBaseURL, "invalidation-base-url", "", "override the base URL used for invalidation paths (requires --invalidation-full-url)")
+	publishCmd.Flags().BoolVar(&invalidationURLEncode, "invalidation-url-encode", false, "URL-encode invalidation paths")
 	publishCmd.Flags().Bool("html", false, "generate HTML documentation pages")
 	publishCmd.Flags().String("html-index", "index.html", "filename for HTML index pages")
 	publishCmd.Flags().Bool("gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
@@ -72,6 +81,34 @@ func runPublish(cmd *cobra.Command, args []string) error {
 			invalidationFormatS = env
 		}
 	}
+	if !cmd.Flags().Lookup("invalidation-full-url").Changed {
+		if env := os.Getenv("TFR_INVALIDATION_FULL_URL"); env != "" {
+			v, err := strconv.ParseBool(env)
+			if err == nil {
+				invalidationFullURL = v
+			}
+		}
+	}
+	if !cmd.Flags().Lookup("invalidation-base-url").Changed {
+		if env := os.Getenv("TFR_INVALIDATION_BASE_URL"); env != "" {
+			invalidationBaseURL = env
+		}
+	}
+	if !cmd.Flags().Lookup("invalidation-url-encode").Changed {
+		if env := os.Getenv("TFR_INVALIDATION_URL_ENCODE"); env != "" {
+			v, err := strconv.ParseBool(env)
+			if err == nil {
+				invalidationURLEncode = v
+			}
+		}
+	}
+	if invalidationBaseURL != "" && !invalidationFullURL {
+		return fmt.Errorf("--invalidation-base-url requires --invalidation-full-url")
+	}
+	if invalidationFullURL && invalidationBaseURL == "" {
+		invalidationBaseURL = cfg.BaseURL
+	}
+	invalidationBaseURL = strings.TrimRight(invalidationBaseURL, "/")
 
 	// --dev is mutually exclusive with --tag and --all, but compatible with --module
 	if publishDev {
@@ -174,6 +211,16 @@ func runPublish(cmd *cobra.Command, args []string) error {
 
 	if invalidationFile != "" && len(invalidationPaths) > 0 {
 		invalidationPaths = dedup(invalidationPaths)
+		if invalidationBaseURL != "" {
+			for i, p := range invalidationPaths {
+				invalidationPaths[i] = invalidationBaseURL + p
+			}
+		}
+		if invalidationURLEncode {
+			for i, p := range invalidationPaths {
+				invalidationPaths[i] = url.QueryEscape(p)
+			}
+		}
 		if err := registry.WriteInvalidationFile(invalidationPaths, invalidationFile, invalidationFormat); err != nil {
 			return err
 		}
@@ -473,3 +520,4 @@ func dedup(items []string) []string {
 	}
 	return out
 }
+
