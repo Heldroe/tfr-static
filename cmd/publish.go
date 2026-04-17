@@ -66,7 +66,6 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--base-url is required (or set TFR_BASE_URL)")
 	}
 
-	// Validate invalidation config
 	if cfg.InvalidationBaseURL != "" && !cfg.InvalidationFullURL {
 		return fmt.Errorf("invalidation_base_url requires invalidation_full_url to be enabled")
 	}
@@ -107,7 +106,6 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("only one of --tag, --module, or --all may be specified")
 	}
 
-	// Validate invalidation format early
 	var invalidationFormat registry.InvalidationFormat
 	if cfg.InvalidationFile != "" {
 		var err error
@@ -180,15 +178,14 @@ func runPublish(cmd *cobra.Command, args []string) error {
 
 	if cfg.InvalidationFile != "" && len(invalidationPaths) > 0 {
 		invalidationPaths = dedup(invalidationPaths)
-		if invalidationBaseURL != "" {
-			for i, p := range invalidationPaths {
-				invalidationPaths[i] = invalidationBaseURL + p
+		for i, p := range invalidationPaths {
+			if invalidationBaseURL != "" {
+				p = invalidationBaseURL + p
 			}
-		}
-		if cfg.InvalidationURLEncode {
-			for i, p := range invalidationPaths {
-				invalidationPaths[i] = url.QueryEscape(p)
+			if cfg.InvalidationURLEncode {
+				p = url.QueryEscape(p)
 			}
+			invalidationPaths[i] = p
 		}
 		if err := registry.WriteInvalidationFile(invalidationPaths, cfg.InvalidationFile, invalidationFormat); err != nil {
 			return err
@@ -205,7 +202,6 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return nil, fmt.Errorf("invalid tag %q: %w", tag, err)
 	}
 
-	// Verify the module path exists at this tag
 	exists, err := gitRunner.PathExistsAtTag(info.Tag, info.ModulePath)
 	if err != nil {
 		return nil, fmt.Errorf("checking module path: %w", err)
@@ -229,7 +225,6 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return nil, err
 	}
 
-	// Generate versions.json with all known versions for this module
 	versions, err := collectModuleVersions(gitRunner, info.ModulePath)
 	if err != nil {
 		return nil, fmt.Errorf("collecting versions: %w", err)
@@ -308,12 +303,18 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 
 	grouped := module.GroupTagsByModule(allParsed)
 
-	var paths []string
+	moduleVersions := make(map[string][]*semver.Version, len(grouped))
 	for modPath, modTags := range grouped {
-		var versions []*semver.Version
-		for _, t := range modTags {
-			versions = append(versions, t.Version)
+		module.SortVersionsAsc(modTags)
+		versions := make([]*semver.Version, len(modTags))
+		for i, t := range modTags {
+			versions[i] = t.Version
 		}
+		moduleVersions[modPath] = versions
+	}
+
+	var paths []string
+	for modPath, versions := range moduleVersions {
 		paths = append(paths, registry.InvalidationPathsForModuleRebuild(modPath, versions, cfg.HTML, cfg.HTMLIndex)...)
 	}
 
@@ -329,16 +330,13 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 	}
 
 	for modPath, modTags := range grouped {
-		module.SortVersionsAsc(modTags)
-		var versions []*semver.Version
 		for _, t := range modTags {
 			fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
 			if err := pub.PublishVersion(t); err != nil {
 				return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 			}
-			versions = append(versions, t.Version)
 		}
-		if err := pub.GenerateVersionsJSON(modPath, versions); err != nil {
+		if err := pub.GenerateVersionsJSON(modPath, moduleVersions[modPath]); err != nil {
 			return nil, err
 		}
 	}
