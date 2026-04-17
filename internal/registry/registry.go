@@ -195,12 +195,42 @@ func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.V
 	return nil
 }
 
-// InvalidationPaths returns the CDN paths that should be invalidated after publishing.
-func InvalidationPaths(modulePath string, version *semver.Version) []string {
-	return []string{
+// InvalidationPathsForNewVersion returns CDN paths to invalidate when publishing
+// a single new tag. The new version's own files (download, HTML) are excluded
+// because they are brand-new URLs that have never been cached.
+func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFile string) []string {
+	paths := []string{
 		fmt.Sprintf("/%s/versions.json", modulePath),
-		fmt.Sprintf("/%s/%s/download", modulePath, version.Original()),
 	}
+	if htmlEnabled {
+		paths = append(paths,
+			"/"+indexFile,
+			fmt.Sprintf("/%s/%s", modulePath, indexFile),
+		)
+	}
+	return paths
+}
+
+// InvalidationPathsForModuleRebuild returns CDN paths to invalidate when
+// rebuilding all versions of a module. Every version's download and HTML pages
+// are included since they are all regenerated.
+func InvalidationPathsForModuleRebuild(modulePath string, versions []*semver.Version, htmlEnabled bool, indexFile string) []string {
+	paths := []string{
+		fmt.Sprintf("/%s/versions.json", modulePath),
+	}
+	for _, v := range versions {
+		paths = append(paths, fmt.Sprintf("/%s/%s/download", modulePath, v.Original()))
+		if htmlEnabled {
+			paths = append(paths, fmt.Sprintf("/%s/%s/%s", modulePath, v.Original(), indexFile))
+		}
+	}
+	if htmlEnabled {
+		paths = append(paths,
+			"/"+indexFile,
+			fmt.Sprintf("/%s/%s", modulePath, indexFile),
+		)
+	}
+	return paths
 }
 
 func generateDownloadHTML(archiveURL string) string {

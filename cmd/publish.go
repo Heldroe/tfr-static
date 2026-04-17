@@ -139,9 +139,26 @@ func runPublish(cmd *cobra.Command, args []string) error {
 			if cfg.TerraformDocs && repoRoot != "" {
 				reader = registry.EnrichedReadmeReader(reader, repoRoot)
 			}
-			grouped := groupedFromGit(gitRunner)
-			if err := generateHTML(gitRunner, cfg.OutputDir, cfg.HTMLIndex, reader, grouped); err != nil {
-				return fmt.Errorf("generating HTML documentation: %w", err)
+			gen := registry.NewHTMLGenerator(gitRunner, cfg.OutputDir, cfg.HTMLIndex)
+			gen.ReadmeReader = reader
+			allGrouped := groupedFromGit(gitRunner)
+
+			switch {
+			case publishTag != "":
+				info, _ := module.ParseTag(publishTag)
+				moduleTags := allGrouped[info.ModulePath]
+				if err := gen.GenerateForVersion(*info, moduleTags, allGrouped); err != nil {
+					return fmt.Errorf("generating HTML documentation: %w", err)
+				}
+			case publishModule != "":
+				moduleTags := allGrouped[publishModule]
+				if err := gen.GenerateForModule(publishModule, moduleTags, allGrouped); err != nil {
+					return fmt.Errorf("generating HTML documentation: %w", err)
+				}
+			case publishAll:
+				if err := gen.GenerateAll(allGrouped); err != nil {
+					return fmt.Errorf("generating HTML documentation: %w", err)
+				}
 			}
 			fmt.Println("HTML documentation generated")
 		}
@@ -156,6 +173,7 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	}
 
 	if invalidationFile != "" && len(invalidationPaths) > 0 {
+		invalidationPaths = dedup(invalidationPaths)
 		if err := registry.WriteInvalidationFile(invalidationPaths, invalidationFile, invalidationFormat); err != nil {
 			return err
 		}
@@ -180,7 +198,7 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return nil, fmt.Errorf("module path %q does not exist at tag %q", info.ModulePath, info.Tag)
 	}
 
-	paths := registry.InvalidationPaths(info.ModulePath, info.Version)
+	paths := registry.InvalidationPathsForNewVersion(info.ModulePath, cfg.HTML, cfg.HTMLIndex)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %s version %s\n", info.ModulePath, info.Version)
@@ -228,27 +246,29 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 
 	module.SortVersionsAsc(moduleTags)
 
-	var paths []string
+	var versions []*semver.Version
 	for _, t := range moduleTags {
-		paths = append(paths, registry.InvalidationPaths(t.ModulePath, t.Version)...)
+		versions = append(versions, t.Version)
 	}
+
+	paths := registry.InvalidationPathsForModuleRebuild(modulePath, versions, cfg.HTML, cfg.HTMLIndex)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %d versions of %s:\n", len(moduleTags), modulePath)
 		for _, t := range moduleTags {
 			fmt.Printf("[dry-run]   %s\n", t.Version)
 		}
-		fmt.Printf("[dry-run] Invalidation: /%s/versions.json\n", modulePath)
+		for _, p := range paths {
+			fmt.Printf("[dry-run] Invalidation: %s\n", p)
+		}
 		return paths, nil
 	}
 
-	var versions []*semver.Version
 	for _, t := range moduleTags {
 		fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
 		if err := pub.PublishVersion(t); err != nil {
 			return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 		}
-		versions = append(versions, t.Version)
 	}
 
 	if err := pub.GenerateVersionsJSON(modulePath, versions); err != nil {
@@ -273,16 +293,21 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 	grouped := module.GroupTagsByModule(allParsed)
 
 	var paths []string
-	for _, modTags := range grouped {
+	for modPath, modTags := range grouped {
+		var versions []*semver.Version
 		for _, t := range modTags {
-			paths = append(paths, registry.InvalidationPaths(t.ModulePath, t.Version)...)
+			versions = append(versions, t.Version)
 		}
+		paths = append(paths, registry.InvalidationPathsForModuleRebuild(modPath, versions, cfg.HTML, cfg.HTMLIndex)...)
 	}
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %d modules:\n", len(grouped))
 		for modPath, modTags := range grouped {
 			fmt.Printf("[dry-run]   %s (%d versions)\n", modPath, len(modTags))
+		}
+		for _, p := range paths {
+			fmt.Printf("[dry-run] Invalidation: %s\n", p)
 		}
 		return paths, nil
 	}
@@ -435,4 +460,16 @@ func collectModuleVersions(gitRunner *git.Runner, modulePath string) ([]*semver.
 		versions = append(versions, t.Version)
 	}
 	return versions, nil
+}
+
+func dedup(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	out := make([]string, 0, len(items))
+	for _, s := range items {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }

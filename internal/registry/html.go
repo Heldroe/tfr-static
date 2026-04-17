@@ -144,7 +144,8 @@ func (g *HTMLGenerator) GenerateAll(grouped map[string][]module.TagInfo) error {
 	return nil
 }
 
-// GenerateForModule generates HTML pages for a single module and updates the root index.
+// GenerateForModule generates HTML pages for a single module (module index +
+// every version page) and updates the root index.
 func (g *HTMLGenerator) GenerateForModule(modPath string, tags []module.TagInfo, allGrouped map[string][]module.TagInfo) error {
 	module.SortVersionsDesc(tags)
 
@@ -156,6 +157,23 @@ func (g *HTMLGenerator) GenerateForModule(modPath string, tags []module.TagInfo,
 		if err := g.generateVersionIndex(t); err != nil {
 			return fmt.Errorf("generating version index for %s: %w", t.Tag, err)
 		}
+	}
+
+	return g.generateRootIndex(allGrouped)
+}
+
+// GenerateForVersion generates the HTML page for a single new version,
+// updates the module index (to show it in the version list), and updates the
+// root index.
+func (g *HTMLGenerator) GenerateForVersion(tag module.TagInfo, moduleTags []module.TagInfo, allGrouped map[string][]module.TagInfo) error {
+	module.SortVersionsDesc(moduleTags)
+
+	if err := g.generateVersionIndex(tag); err != nil {
+		return fmt.Errorf("generating version index for %s: %w", tag.Tag, err)
+	}
+
+	if err := g.generateModuleIndex(tag.ModulePath, moduleTags); err != nil {
+		return fmt.Errorf("generating module index for %s: %w", tag.ModulePath, err)
 	}
 
 	return g.generateRootIndex(allGrouped)

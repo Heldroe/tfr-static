@@ -159,6 +159,102 @@ func TestHTMLGenerator_BackLinks(t *testing.T) {
 	assertFileContains(t, verIndex, `href="../"`)
 }
 
+func TestHTMLGenerator_GenerateForVersion(t *testing.T) {
+	_, gitRunner := setupHTMLTestRepo(t)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+
+	newTag := module.TagInfo{
+		Tag: "hetzner/server-2.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("2.0.0"),
+	}
+	moduleTags := []module.TagInfo{
+		newTag,
+		{Tag: "hetzner/server-1.1.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.1.0")},
+		{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+	}
+	allGrouped := map[string][]module.TagInfo{
+		"hetzner/server": moduleTags,
+		"aws/ec2/security-group": {
+			{Tag: "aws/ec2/security-group-0.0.1", ModulePath: "aws/ec2/security-group", Version: semver.MustParse("0.0.1")},
+		},
+	}
+
+	if err := gen.GenerateForVersion(newTag, moduleTags, allGrouped); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root index should list all modules
+	rootIndex := filepath.Join(outputDir, "index.html")
+	assertFileContains(t, rootIndex, "hetzner/server")
+	assertFileContains(t, rootIndex, "aws/ec2/security-group")
+
+	// Module index should list all versions including the new one
+	modIndex := filepath.Join(outputDir, "hetzner", "server", "index.html")
+	assertFileContains(t, modIndex, "2.0.0")
+	assertFileContains(t, modIndex, "1.1.0")
+	assertFileContains(t, modIndex, "1.0.0")
+
+	// New version page should exist
+	verIndex := filepath.Join(outputDir, "hetzner", "server", "2.0.0", "index.html")
+	assertFileContains(t, verIndex, "2.0.0")
+	assertFileContains(t, verIndex, "hetzner/server")
+
+	// Other modules' pages should NOT be generated
+	sgIndex := filepath.Join(outputDir, "aws", "ec2", "security-group", "index.html")
+	if _, err := os.Stat(sgIndex); !os.IsNotExist(err) {
+		t.Error("should not generate HTML for unrelated modules")
+	}
+
+	// Other versions' pages should NOT be generated
+	oldVerIndex := filepath.Join(outputDir, "hetzner", "server", "1.0.0", "index.html")
+	if _, err := os.Stat(oldVerIndex); !os.IsNotExist(err) {
+		t.Error("should not generate HTML for other versions of the same module")
+	}
+}
+
+func TestHTMLGenerator_GenerateForModule(t *testing.T) {
+	_, gitRunner := setupHTMLTestRepo(t)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+
+	moduleTags := []module.TagInfo{
+		{Tag: "hetzner/server-1.1.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.1.0")},
+		{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+	}
+	allGrouped := map[string][]module.TagInfo{
+		"hetzner/server": moduleTags,
+		"aws/ec2/security-group": {
+			{Tag: "aws/ec2/security-group-0.0.1", ModulePath: "aws/ec2/security-group", Version: semver.MustParse("0.0.1")},
+		},
+	}
+
+	if err := gen.GenerateForModule("hetzner/server", moduleTags, allGrouped); err != nil {
+		t.Fatal(err)
+	}
+
+	// Root index should list all modules
+	rootIndex := filepath.Join(outputDir, "index.html")
+	assertFileContains(t, rootIndex, "hetzner/server")
+	assertFileContains(t, rootIndex, "aws/ec2/security-group")
+
+	// Module index should list all versions
+	modIndex := filepath.Join(outputDir, "hetzner", "server", "index.html")
+	assertFileContains(t, modIndex, "1.1.0")
+	assertFileContains(t, modIndex, "1.0.0")
+
+	// Each version page should exist
+	for _, v := range []string{"1.1.0", "1.0.0"} {
+		verIndex := filepath.Join(outputDir, "hetzner", "server", v, "index.html")
+		assertFileContains(t, verIndex, v)
+	}
+
+	// Other modules' pages should NOT be generated
+	sgIndex := filepath.Join(outputDir, "aws", "ec2", "security-group", "index.html")
+	if _, err := os.Stat(sgIndex); !os.IsNotExist(err) {
+		t.Error("should not generate HTML for unrelated modules")
+	}
+}
+
 func TestHTMLGenerator_WithFilesystemReader(t *testing.T) {
 	repoPath, gitRunner := setupHTMLTestRepo(t)
 	outputDir := t.TempDir()
