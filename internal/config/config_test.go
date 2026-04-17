@@ -9,14 +9,19 @@ import (
 func TestLoadFileConfig_AllFields(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-base_url       = "https://registry.example.com"
-main_branch    = "master"
-output_dir     = "dist"
-modules_path   = "/v1/modules/"
-html           = true
-html_index     = "docs.html"
-gzip           = true
-terraform_docs = true
+base_url               = "https://registry.example.com"
+main_branch            = "master"
+output_dir             = "dist"
+modules_path           = "/v1/modules/"
+html                   = true
+html_index             = "docs.html"
+gzip                   = true
+terraform_docs         = true
+invalidation_file      = "invalidation.json"
+invalidation_format    = "cloudfront"
+invalidation_full_url  = true
+invalidation_base_url  = "https://cdn.example.com"
+invalidation_url_encode = true
 `
 	os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644)
 
@@ -50,6 +55,21 @@ terraform_docs = true
 	}
 	if fc.TerraformDocs == nil || !*fc.TerraformDocs {
 		t.Error("TerraformDocs should be true")
+	}
+	if fc.InvalidationFile == nil || *fc.InvalidationFile != "invalidation.json" {
+		t.Errorf("InvalidationFile = %v", fc.InvalidationFile)
+	}
+	if fc.InvalidationFormat == nil || *fc.InvalidationFormat != "cloudfront" {
+		t.Errorf("InvalidationFormat = %v", fc.InvalidationFormat)
+	}
+	if fc.InvalidationFullURL == nil || !*fc.InvalidationFullURL {
+		t.Error("InvalidationFullURL should be true")
+	}
+	if fc.InvalidationBaseURL == nil || *fc.InvalidationBaseURL != "https://cdn.example.com" {
+		t.Errorf("InvalidationBaseURL = %v", fc.InvalidationBaseURL)
+	}
+	if fc.InvalidationURLEncode == nil || !*fc.InvalidationURLEncode {
+		t.Error("InvalidationURLEncode should be true")
 	}
 }
 

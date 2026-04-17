@@ -69,7 +69,9 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	}
 
 	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex *string
+	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL *string
 	var fileHTML, fileGzip, fileTerraformDocs *bool
+	var fileInvalidationFullURL, fileInvalidationURLEncode *bool
 	if fileCfg != nil {
 		fileBaseURL = fileCfg.BaseURL
 		fileMainBranch = fileCfg.MainBranch
@@ -79,6 +81,11 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileHTML = fileCfg.HTML
 		fileGzip = fileCfg.Gzip
 		fileTerraformDocs = fileCfg.TerraformDocs
+		fileInvalidationFile = fileCfg.InvalidationFile
+		fileInvalidationFormat = fileCfg.InvalidationFormat
+		fileInvalidationFullURL = fileCfg.InvalidationFullURL
+		fileInvalidationBaseURL = fileCfg.InvalidationBaseURL
+		fileInvalidationURLEncode = fileCfg.InvalidationURLEncode
 	}
 
 	cfg.BaseURL = resolveValue(
@@ -127,6 +134,36 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		boolFlagIfChanged(cmd, "terraform-docs"),
 		os.Getenv("TFR_TERRAFORM_DOCS"),
 		fileTerraformDocs,
+		false,
+	)
+	cfg.InvalidationFile = resolveValue(
+		flagIfChanged(cmd, "invalidation-file"),
+		os.Getenv("TFR_INVALIDATION_FILE"),
+		fileInvalidationFile,
+		"",
+	)
+	cfg.InvalidationFormat = resolveValue(
+		flagIfChanged(cmd, "invalidation-format"),
+		os.Getenv("TFR_INVALIDATION_FORMAT"),
+		fileInvalidationFormat,
+		"txt",
+	)
+	cfg.InvalidationFullURL = resolveBoolValue(
+		boolFlagIfChanged(cmd, "invalidation-full-url"),
+		os.Getenv("TFR_INVALIDATION_FULL_URL"),
+		fileInvalidationFullURL,
+		false,
+	)
+	cfg.InvalidationBaseURL = resolveValue(
+		flagIfChanged(cmd, "invalidation-base-url"),
+		os.Getenv("TFR_INVALIDATION_BASE_URL"),
+		fileInvalidationBaseURL,
+		"",
+	)
+	cfg.InvalidationURLEncode = resolveBoolValue(
+		boolFlagIfChanged(cmd, "invalidation-url-encode"),
+		os.Getenv("TFR_INVALIDATION_URL_ENCODE"),
+		fileInvalidationURLEncode,
 		false,
 	)
 
