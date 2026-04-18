@@ -74,7 +74,7 @@ invalidation_full_url   = true
 invalidation_base_url   = "https://cdn.example.com"
 invalidation_url_encode = false
 invalidation_dirs       = false
-favicon_dir             = "img/favicon"
+html_base               = "templates/base.html"
 ```
 
 All fields are optional. Unknown fields will cause an error to catch typos early.
@@ -108,7 +108,7 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_INVALIDATION_BASE_URL` | `--invalidation-base-url` |
 | `TFR_INVALIDATION_URL_ENCODE` | `--invalidation-url-encode` |
 | `TFR_INVALIDATION_DIRS` | `--invalidation-dirs` |
-| `TFR_FAVICON_DIR` | `--favicon-dir` |
+| `TFR_HTML_BASE` | `--html-base` |
 | `TFR_ADDR` | `--addr` (serve) |
 
 ## Commands
@@ -177,7 +177,7 @@ tfr-static publish --all --gzip
 | `--invalidation-dirs` | Include directory paths (trailing `/`) for index files in invalidation output | `false` |
 | `--html` | Generate HTML documentation pages for browsing modules | `false` |
 | `--html-index` | Filename for HTML index pages | `index.html` |
-| `--favicon-dir` | Directory containing favicon assets for HTML pages | *(disabled)* |
+| `--html-base` | Path to a custom base HTML template file | *(built-in default)* |
 | `--terraform-docs` | Enrich HTML pages with auto-generated terraform-docs output (inputs, outputs, etc.) | `false` |
 | `--gzip` | Gzip-compress text files for pre-compressed upload to S3 | `false` |
 
@@ -251,6 +251,26 @@ target/
 If a module directory contains a `README.md` next to its `.tf` files, the README is rendered as HTML on both the module page (from the latest version) and each version page (from that version's tag).
 
 Use `--html-index` to change the filename (e.g. `--html-index docs.html`).
+
+#### Custom base template
+
+Use `--html-base` to provide your own HTML shell for all generated pages. The template must contain `{{.Title}}` and `{{.Content}}` placeholders:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Title}}</title>
+<!-- Add your own styles, favicons, analytics, etc. -->
+</head>
+<body>
+{{.Content}}
+</body>
+</html>
+```
+
+The default template is available at [`internal/registry/templates/base.html`](internal/registry/templates/base.html) — copy it to your modules repository and customize it.
 
 #### terraform-docs integration
 

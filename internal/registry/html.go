@@ -2,21 +2,23 @@ package registry
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"html/template"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/Heldroe/tfr-static/internal/docs"
 	"github.com/Heldroe/tfr-static/internal/git"
 	"github.com/Heldroe/tfr-static/internal/module"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )
+
+//go:embed templates/base.html
+var defaultBaseTemplate string
 
 // ReadmeReader returns the raw markdown content of a README for a given module path
 // and git tag. The tag is used by git-based readers to read from the correct commit.
@@ -72,9 +74,9 @@ func EnrichedReadmeReader(base ReadmeReader, repoRoot string) ReadmeReader {
 	}
 }
 
-// FaviconEntry holds a pre-rendered <link> tag for a favicon asset.
-type FaviconEntry struct {
-	Tag template.HTML
+type basePage struct {
+	Title   string
+	Content template.HTML
 }
 
 // HTMLGenerator creates HTML documentation pages for the registry.
@@ -83,8 +85,7 @@ type HTMLGenerator struct {
 	OutputDir    string
 	IndexFile    string
 	ReadmeReader ReadmeReader
-	Favicons     []FaviconEntry
-	ManifestHref string
+	baseTmpl     *template.Template
 }
 
 // NewHTMLGenerator creates a new HTMLGenerator.
@@ -96,61 +97,27 @@ func NewHTMLGenerator(gitRunner *git.Runner, outputDir, indexFile string) *HTMLG
 		Git:       gitRunner,
 		OutputDir: outputDir,
 		IndexFile: indexFile,
+		baseTmpl:  template.Must(template.New("base").Parse(defaultBaseTemplate)),
 	}
 }
 
-var pngSizePattern = regexp.MustCompile(`^favicon-(\d+x\d+)\.png$`)
-
-// ScanFaviconDir scans a directory for known favicon assets and populates
-// the generator's Favicons and ManifestHref fields. The faviconURLDir is the
-// URL path prefix where assets will be served (e.g. "/img/favicon").
-func (g *HTMLGenerator) ScanFaviconDir(fsDir, faviconURLDir string) error {
-	entries, err := os.ReadDir(fsDir)
+// LoadBaseTemplate loads a custom base HTML template from a file path.
+// The template must contain {{.Title}} and {{.Content}} placeholders.
+func (g *HTMLGenerator) LoadBaseTemplate(path string) error {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading favicon directory %s: %w", fsDir, err)
+		return fmt.Errorf("reading base template %s: %w", path, err)
 	}
-
-	urlDir := strings.TrimRight(faviconURLDir, "/")
-
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		href := urlDir + "/" + name
-
-		var tag string
-		if m := pngSizePattern.FindStringSubmatch(name); m != nil {
-			tag = fmt.Sprintf(`<link rel="icon" type="image/png" href="%s" sizes="%s" />`, href, m[1])
-		} else if name == "favicon.svg" {
-			tag = fmt.Sprintf(`<link rel="icon" type="image/svg+xml" href="%s" />`, href)
-		} else if name == "favicon.ico" {
-			tag = fmt.Sprintf(`<link rel="shortcut icon" href="%s" />`, href)
-		} else if name == "apple-touch-icon.png" {
-			tag = fmt.Sprintf(`<link rel="apple-touch-icon" sizes="180x180" href="%s" />`, href)
-		} else if name == "site.webmanifest" {
-			g.ManifestHref = href
-		}
-		if tag != "" {
-			g.Favicons = append(g.Favicons, FaviconEntry{Tag: template.HTML(tag)})
-		}
+	tmpl, err := template.New("base").Parse(string(content))
+	if err != nil {
+		return fmt.Errorf("parsing base template %s: %w", path, err)
 	}
-
+	g.baseTmpl = tmpl
 	return nil
-}
-
-func (g *HTMLGenerator) headMeta() headMeta {
-	return headMeta{Favicons: g.Favicons, ManifestHref: g.ManifestHref}
-}
-
-type headMeta struct {
-	Favicons     []FaviconEntry
-	ManifestHref string
 }
 
 type rootPageData struct {
 	Modules []rootModuleEntry
-	headMeta
 }
 
 type rootModuleEntry struct {
@@ -163,7 +130,6 @@ type modulePageData struct {
 	ModulePath string
 	Versions   []string
 	ReadmeHTML template.HTML
-	headMeta
 }
 
 type versionPageData struct {
@@ -172,7 +138,6 @@ type versionPageData struct {
 	ArchiveURL          string
 	ArchiveDownloadName string
 	ReadmeHTML          template.HTML
-	headMeta
 }
 
 // GenerateAll generates the complete HTML documentation tree.
@@ -185,10 +150,6 @@ func (g *HTMLGenerator) GenerateAll(grouped map[string][]module.TagInfo) error {
 	// Generate module and version pages
 	for modPath, tags := range grouped {
 		module.SortVersionsDesc(tags)
-		versions := make([]*semver.Version, len(tags))
-		for i, t := range tags {
-			versions[i] = t.Version
-		}
 
 		if err := g.generateModuleIndex(modPath, tags); err != nil {
 			return fmt.Errorf("generating module index for %s: %w", modPath, err)
@@ -257,8 +218,8 @@ func (g *HTMLGenerator) generateRootIndex(grouped map[string][]module.TagInfo) e
 		return entries[i].Path < entries[j].Path
 	})
 
-	data := rootPageData{Modules: entries, headMeta: g.headMeta()}
-	return g.writeTemplate(filepath.Join(g.OutputDir, g.IndexFile), rootTmpl, data)
+	data := rootPageData{Modules: entries}
+	return g.writePage(filepath.Join(g.OutputDir, g.IndexFile), "Terraform Module Registry", rootTmpl, data)
 }
 
 func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInfo) error {
@@ -277,10 +238,9 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 		ModulePath: modPath,
 		Versions:   versions,
 		ReadmeHTML: readmeHTML,
-		headMeta:   g.headMeta(),
 	}
 	dir := filepath.Join(g.OutputDir, modPath)
-	return g.writeTemplate(filepath.Join(dir, g.IndexFile), moduleTmpl, data)
+	return g.writePage(filepath.Join(dir, g.IndexFile), modPath, moduleTmpl, data)
 }
 
 func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
@@ -296,10 +256,9 @@ func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 		ArchiveURL:          archiveURL,
 		ArchiveDownloadName: descriptiveArchiveName(tag.ModulePath, tag.Version),
 		ReadmeHTML:          readmeHTML,
-		headMeta:            g.headMeta(),
 	}
 	dir := filepath.Join(g.OutputDir, tag.ModulePath, tag.Version.Original())
-	return g.writeTemplate(filepath.Join(dir, g.IndexFile), versionTmpl, data)
+	return g.writePage(filepath.Join(dir, g.IndexFile), tag.ModulePath+" "+tag.Version.Original(), versionTmpl, data)
 }
 
 // readReadme returns the raw README content for a module, using the ReadmeReader
@@ -326,15 +285,22 @@ func renderMarkdown(content string) template.HTML {
 	return template.HTML(buf.String())
 }
 
-func (g *HTMLGenerator) writeTemplate(path string, tmpl *template.Template, data any) error {
+func (g *HTMLGenerator) writePage(path, title string, contentTmpl *template.Template, data any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	var contentBuf bytes.Buffer
+	if err := contentTmpl.Execute(&contentBuf, data); err != nil {
 		return err
 	}
-	return os.WriteFile(path, buf.Bytes(), 0o644)
+	var pageBuf bytes.Buffer
+	if err := g.baseTmpl.Execute(&pageBuf, basePage{
+		Title:   title,
+		Content: template.HTML(contentBuf.String()),
+	}); err != nil {
+		return err
+	}
+	return os.WriteFile(path, pageBuf.Bytes(), 0o644)
 }
 
 func pathDepth(p string) int {
@@ -362,21 +328,7 @@ func relRootVersion(modPath string) string {
 	return strings.Join(parts, "/")
 }
 
-const faviconTmpl = `{{range .Favicons}}{{.Tag}}
-{{end}}{{if .ManifestHref}}<link rel="manifest" href="{{.ManifestHref}}" />
-{{end}}`
-
-var rootTmpl = template.Must(template.New("root").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Terraform Module Registry</title>
-<style>` + cssStyles + `</style>
-` + faviconTmpl + `</head>
-<body>
-<div class="container">
-<h1>Terraform Module Registry</h1>
+var rootTmpl = template.Must(template.New("root").Parse(`<h1>Terraform Module Registry</h1>
 <table>
 <thead>
 <tr><th>Module</th><th>Latest Version</th><th>Versions</th></tr>
@@ -391,24 +343,11 @@ var rootTmpl = template.Must(template.New("root").Parse(`<!DOCTYPE html>
 {{end}}
 </tbody>
 </table>
-</div>
-</body>
-</html>
 `))
 
 var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
 	"relRoot": relRoot,
-}).Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.ModulePath}}</title>
-<style>` + cssStyles + `</style>
-` + faviconTmpl + `</head>
-<body>
-<div class="container">
-<p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
+}).Parse(`<p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
 <h1>{{.ModulePath}}</h1>
 <h2>Versions</h2>
 <ul>
@@ -420,50 +359,16 @@ var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
 <hr>
 <div class="readme">{{.ReadmeHTML}}</div>
 {{end}}
-</div>
-</body>
-</html>
 `))
 
 var versionTmpl = template.Must(template.New("version").Funcs(template.FuncMap{
 	"relRootVersion": relRootVersion,
-}).Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.ModulePath}} {{.Version}}</title>
-<style>` + cssStyles + `</style>
-` + faviconTmpl + `</head>
-<body>
-<div class="container">
-<p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
+}).Parse(`<p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
 <h1>{{.ModulePath}} <span class="version">{{.Version}}</span></h1>
 <p>Download: <a href="{{.ArchiveURL}}" download="{{.ArchiveDownloadName}}">{{.ArchiveURL}}</a></p>
 {{if .ReadmeHTML}}
 <hr>
 <div class="readme">{{.ReadmeHTML}}</div>
 {{end}}
-</div>
-</body>
-</html>
 `))
 
-const cssStyles = `
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; color: #24292e; }
-.container { max-width: 900px; margin: 0 auto; padding: 2rem; }
-h1 { border-bottom: 1px solid #e1e4e8; padding-bottom: 0.5rem; }
-.version { color: #6a737d; font-weight: normal; }
-a { color: #0366d6; text-decoration: none; }
-a:hover { text-decoration: underline; }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 0.5rem 1rem; border-bottom: 1px solid #e1e4e8; }
-th { background: #f6f8fa; }
-ul { list-style: none; padding: 0; }
-ul li { padding: 0.3rem 0; }
-hr { border: none; border-top: 1px solid #e1e4e8; margin: 2rem 0; }
-.readme { line-height: 1.6; }
-.readme pre { background: #f6f8fa; padding: 1rem; overflow-x: auto; border-radius: 6px; }
-.readme code { background: #f6f8fa; padding: 0.2em 0.4em; border-radius: 3px; font-size: 85%; }
-.readme pre code { background: none; padding: 0; font-size: 100%; }
-`

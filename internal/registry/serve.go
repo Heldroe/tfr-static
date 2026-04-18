@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -27,6 +28,7 @@ type DevServer struct {
 	RepoRoot    string
 	ModulesPath string
 	HTMLEnabled bool
+	baseTmpl    *template.Template
 }
 
 // NewDevServer creates a DevServer.
@@ -44,6 +46,7 @@ func NewDevServer(gitRunner *git.Runner, repoRoot, modulesPath string) *DevServe
 		Git:         gitRunner,
 		RepoRoot:    repoRoot,
 		ModulesPath: modulesPath,
+		baseTmpl:    template.Must(template.New("base").Parse(defaultBaseTemplate)),
 	}
 }
 
@@ -218,13 +221,7 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 				VersionCount:  len(moduleTags) + 1, // +1 for dev
 			})
 		}
-		var buf bytes.Buffer
-		if err := rootTmpl.Execute(&buf, rootPageData{Modules: entries}); err != nil {
-			http.Error(w, "template error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		w.Write(buf.Bytes())
+		s.renderPage(w, "Terraform Module Registry", rootTmpl, rootPageData{Modules: entries})
 		return
 	}
 
@@ -244,13 +241,7 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 					ArchiveDownloadName: descriptiveArchiveNameFromParts(possibleModule, possibleVersion),
 					ReadmeHTML:          readmeHTML,
 				}
-				var buf bytes.Buffer
-				if err := versionTmpl.Execute(&buf, data); err != nil {
-					http.Error(w, "template error", http.StatusInternalServerError)
-					return
-				}
-				w.Header().Set("Content-Type", "text/html")
-				w.Write(buf.Bytes())
+				s.renderPage(w, possibleModule+" "+possibleVersion, versionTmpl, data)
 				return
 			}
 		}
@@ -275,17 +266,29 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 			Versions:   versions,
 			ReadmeHTML: readmeHTML,
 		}
-		var buf bytes.Buffer
-		if err := moduleTmpl.Execute(&buf, data); err != nil {
-			http.Error(w, "template error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		w.Write(buf.Bytes())
+		s.renderPage(w, path, moduleTmpl, data)
 		return
 	}
 
 	http.NotFound(w, r)
+}
+
+func (s *DevServer) renderPage(w http.ResponseWriter, title string, contentTmpl *template.Template, data any) {
+	var contentBuf bytes.Buffer
+	if err := contentTmpl.Execute(&contentBuf, data); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+		return
+	}
+	var pageBuf bytes.Buffer
+	if err := s.baseTmpl.Execute(&pageBuf, basePage{
+		Title:   title,
+		Content: template.HTML(contentBuf.String()),
+	}); err != nil {
+		http.Error(w, "template error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(pageBuf.Bytes())
 }
 
 func (s *DevServer) moduleExists(modulePath string) bool {

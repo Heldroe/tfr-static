@@ -69,7 +69,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	}
 
 	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex *string
-	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL, fileFaviconDir *string
+	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL, fileHTMLBase *string
 	var fileHTML, fileGzip, fileTerraformDocs *bool
 	var fileInvalidationFullURL, fileInvalidationURLEncode, fileInvalidationDirs *bool
 	if fileCfg != nil {
@@ -87,7 +87,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileInvalidationBaseURL = fileCfg.InvalidationBaseURL
 		fileInvalidationURLEncode = fileCfg.InvalidationURLEncode
 		fileInvalidationDirs = fileCfg.InvalidationDirs
-		fileFaviconDir = fileCfg.FaviconDir
+		fileHTMLBase = fileCfg.HTMLBase
 	}
 
 	cfg.BaseURL = resolveValue(
@@ -174,13 +174,12 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileInvalidationDirs,
 		false,
 	)
-	cfg.FaviconDir = resolveValue(
-		flagIfChanged(cmd, "favicon-dir"),
-		os.Getenv("TFR_FAVICON_DIR"),
-		fileFaviconDir,
+	cfg.HTMLBase = resolveValue(
+		flagIfChanged(cmd, "html-base"),
+		os.Getenv("TFR_HTML_BASE"),
+		fileHTMLBase,
 		"",
 	)
-
 	return nil
 }
 
