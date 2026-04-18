@@ -197,7 +197,7 @@ func TestGenerateVersionsJSON(t *testing.T) {
 
 func TestInvalidationPathsForNewVersion(t *testing.T) {
 	// Without HTML
-	paths := InvalidationPathsForNewVersion("hetzner/server", false, "index.html")
+	paths := InvalidationPathsForNewVersion("hetzner/server", false, "index.html", false)
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %d: %v", len(paths), paths)
 	}
@@ -205,12 +205,30 @@ func TestInvalidationPathsForNewVersion(t *testing.T) {
 		t.Errorf("paths[0] = %q", paths[0])
 	}
 
-	// With HTML
-	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html")
+	// With HTML, no dirs
+	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html", false)
 	expected := []string{
 		"/hetzner/server/versions.json",
 		"/index.html",
 		"/hetzner/server/index.html",
+	}
+	if len(paths) != len(expected) {
+		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
+	}
+	for i, want := range expected {
+		if paths[i] != want {
+			t.Errorf("paths[%d] = %q, want %q", i, paths[i], want)
+		}
+	}
+
+	// With HTML and dirs
+	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html", true)
+	expected = []string{
+		"/hetzner/server/versions.json",
+		"/index.html",
+		"/",
+		"/hetzner/server/index.html",
+		"/hetzner/server/",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
@@ -229,7 +247,7 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 	}
 
 	// Without HTML
-	paths := InvalidationPathsForModuleRebuild("hetzner/server", versions, false, "index.html")
+	paths := InvalidationPathsForModuleRebuild("hetzner/server", versions, false, "index.html", false)
 	expected := []string{
 		"/hetzner/server/versions.json",
 		"/hetzner/server/1.0.0/download",
@@ -244,8 +262,8 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 		}
 	}
 
-	// With HTML
-	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html")
+	// With HTML, no dirs
+	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html", false)
 	expected = []string{
 		"/hetzner/server/versions.json",
 		"/hetzner/server/1.0.0/download",
@@ -263,6 +281,30 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 			t.Errorf("paths[%d] = %q, want %q", i, paths[i], want)
 		}
 	}
+
+	// With HTML and dirs
+	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html", true)
+	expected = []string{
+		"/hetzner/server/versions.json",
+		"/hetzner/server/1.0.0/download",
+		"/hetzner/server/1.0.0/index.html",
+		"/hetzner/server/1.0.0/",
+		"/hetzner/server/0.1.0/download",
+		"/hetzner/server/0.1.0/index.html",
+		"/hetzner/server/0.1.0/",
+		"/index.html",
+		"/",
+		"/hetzner/server/index.html",
+		"/hetzner/server/",
+	}
+	if len(paths) != len(expected) {
+		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
+	}
+	for i, want := range expected {
+		if paths[i] != want {
+			t.Errorf("paths[%d] = %q, want %q", i, paths[i], want)
+		}
+	}
 }
 
 func TestInvalidationPathsNoDuplicates(t *testing.T) {
@@ -271,7 +313,7 @@ func TestInvalidationPathsNoDuplicates(t *testing.T) {
 		semver.MustParse("1.0.0"),
 		semver.MustParse("0.1.0"),
 	}
-	paths := InvalidationPathsForModuleRebuild("mymod", versions, true, "index.html")
+	paths := InvalidationPathsForModuleRebuild("mymod", versions, true, "index.html", true)
 	seen := make(map[string]bool)
 	for _, p := range paths {
 		if seen[p] {

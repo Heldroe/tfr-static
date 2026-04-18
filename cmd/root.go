@@ -71,7 +71,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex *string
 	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL *string
 	var fileHTML, fileGzip, fileTerraformDocs *bool
-	var fileInvalidationFullURL, fileInvalidationURLEncode *bool
+	var fileInvalidationFullURL, fileInvalidationURLEncode, fileInvalidationDirs *bool
 	if fileCfg != nil {
 		fileBaseURL = fileCfg.BaseURL
 		fileMainBranch = fileCfg.MainBranch
@@ -86,6 +86,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileInvalidationFullURL = fileCfg.InvalidationFullURL
 		fileInvalidationBaseURL = fileCfg.InvalidationBaseURL
 		fileInvalidationURLEncode = fileCfg.InvalidationURLEncode
+		fileInvalidationDirs = fileCfg.InvalidationDirs
 	}
 
 	cfg.BaseURL = resolveValue(
@@ -164,6 +165,12 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		boolFlagIfChanged(cmd, "invalidation-url-encode"),
 		os.Getenv("TFR_INVALIDATION_URL_ENCODE"),
 		fileInvalidationURLEncode,
+		false,
+	)
+	cfg.InvalidationDirs = resolveBoolValue(
+		boolFlagIfChanged(cmd, "invalidation-dirs"),
+		os.Getenv("TFR_INVALIDATION_DIRS"),
+		fileInvalidationDirs,
 		false,
 	)
 

@@ -54,6 +54,7 @@ func init() {
 	publishCmd.Flags().Bool("invalidation-full-url", false, "prepend the base URL to invalidation paths")
 	publishCmd.Flags().String("invalidation-base-url", "", "override the base URL used for invalidation paths (requires --invalidation-full-url)")
 	publishCmd.Flags().Bool("invalidation-url-encode", false, "URL-encode invalidation paths")
+	publishCmd.Flags().Bool("invalidation-dirs", false, "include directory paths (trailing /) for index files in invalidation output")
 	publishCmd.Flags().Bool("html", false, "generate HTML documentation pages")
 	publishCmd.Flags().String("html-index", "index.html", "filename for HTML index pages")
 	publishCmd.Flags().Bool("gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
@@ -210,7 +211,7 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return nil, fmt.Errorf("module path %q does not exist at tag %q", info.ModulePath, info.Tag)
 	}
 
-	paths := registry.InvalidationPathsForNewVersion(info.ModulePath, cfg.HTML, cfg.HTMLIndex)
+	paths := registry.InvalidationPathsForNewVersion(info.ModulePath, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %s version %s\n", info.ModulePath, info.Version)
@@ -262,7 +263,7 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 		versions = append(versions, t.Version)
 	}
 
-	paths := registry.InvalidationPathsForModuleRebuild(modulePath, versions, cfg.HTML, cfg.HTMLIndex)
+	paths := registry.InvalidationPathsForModuleRebuild(modulePath, versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %d versions of %s:\n", len(moduleTags), modulePath)
@@ -315,7 +316,7 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 
 	var paths []string
 	for modPath, versions := range moduleVersions {
-		paths = append(paths, registry.InvalidationPathsForModuleRebuild(modPath, versions, cfg.HTML, cfg.HTMLIndex)...)
+		paths = append(paths, registry.InvalidationPathsForModuleRebuild(modPath, versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)...)
 	}
 
 	if dryRun {

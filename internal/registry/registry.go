@@ -198,15 +198,20 @@ func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.V
 // InvalidationPathsForNewVersion returns CDN paths to invalidate when publishing
 // a single new tag. The new version's own files (download, HTML) are excluded
 // because they are brand-new URLs that have never been cached.
-func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFile string) []string {
+func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
 	paths := []string{
 		fmt.Sprintf("/%s/versions.json", modulePath),
 	}
 	if htmlEnabled {
-		paths = append(paths,
-			"/"+indexFile,
-			fmt.Sprintf("/%s/%s", modulePath, indexFile),
-		)
+		paths = append(paths, "/"+indexFile)
+		if dirsEnabled {
+			paths = append(paths, "/")
+		}
+		modIndex := fmt.Sprintf("/%s/%s", modulePath, indexFile)
+		paths = append(paths, modIndex)
+		if dirsEnabled {
+			paths = append(paths, fmt.Sprintf("/%s/", modulePath))
+		}
 	}
 	return paths
 }
@@ -214,21 +219,29 @@ func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFi
 // InvalidationPathsForModuleRebuild returns CDN paths to invalidate when
 // rebuilding all versions of a module. Every version's download and HTML pages
 // are included since they are all regenerated.
-func InvalidationPathsForModuleRebuild(modulePath string, versions []*semver.Version, htmlEnabled bool, indexFile string) []string {
+func InvalidationPathsForModuleRebuild(modulePath string, versions []*semver.Version, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
 	paths := []string{
 		fmt.Sprintf("/%s/versions.json", modulePath),
 	}
 	for _, v := range versions {
 		paths = append(paths, fmt.Sprintf("/%s/%s/download", modulePath, v.Original()))
 		if htmlEnabled {
-			paths = append(paths, fmt.Sprintf("/%s/%s/%s", modulePath, v.Original(), indexFile))
+			verIndex := fmt.Sprintf("/%s/%s/%s", modulePath, v.Original(), indexFile)
+			paths = append(paths, verIndex)
+			if dirsEnabled {
+				paths = append(paths, fmt.Sprintf("/%s/%s/", modulePath, v.Original()))
+			}
 		}
 	}
 	if htmlEnabled {
-		paths = append(paths,
-			"/"+indexFile,
-			fmt.Sprintf("/%s/%s", modulePath, indexFile),
-		)
+		paths = append(paths, "/"+indexFile)
+		if dirsEnabled {
+			paths = append(paths, "/")
+		}
+		paths = append(paths, fmt.Sprintf("/%s/%s", modulePath, indexFile))
+		if dirsEnabled {
+			paths = append(paths, fmt.Sprintf("/%s/", modulePath))
+		}
 	}
 	return paths
 }

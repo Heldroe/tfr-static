@@ -73,6 +73,7 @@ invalidation_format     = "cloudfront"
 invalidation_full_url   = true
 invalidation_base_url   = "https://cdn.example.com"
 invalidation_url_encode = false
+invalidation_dirs       = false
 ```
 
 All fields are optional. Unknown fields will cause an error to catch typos early.
@@ -105,6 +106,7 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_INVALIDATION_FULL_URL` | `--invalidation-full-url` |
 | `TFR_INVALIDATION_BASE_URL` | `--invalidation-base-url` |
 | `TFR_INVALIDATION_URL_ENCODE` | `--invalidation-url-encode` |
+| `TFR_INVALIDATION_DIRS` | `--invalidation-dirs` |
 | `TFR_ADDR` | `--addr` (serve) |
 
 ## Commands
@@ -170,6 +172,7 @@ tfr-static publish --all --gzip
 | `--invalidation-full-url` | Prepend the base URL to invalidation paths | `false` |
 | `--invalidation-base-url` | Override the base URL used for invalidation paths (requires `--invalidation-full-url`) | *(uses `--base-url`)* |
 | `--invalidation-url-encode` | URL-encode the full invalidation paths (for use as query parameters) | `false` |
+| `--invalidation-dirs` | Include directory paths (trailing `/`) for index files in invalidation output | `false` |
 | `--html` | Generate HTML documentation pages for browsing modules | `false` |
 | `--html-index` | Filename for HTML index pages | `index.html` |
 | `--terraform-docs` | Enrich HTML pages with auto-generated terraform-docs output (inputs, outputs, etc.) | `false` |
