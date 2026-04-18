@@ -168,3 +168,13 @@ func (r *Runner) ListFilesAtTag(tag, path string) ([]string, error) {
 	}
 	return strings.Split(out, "\n"), nil
 }
+
+// ModuleHasChanges reports whether the given module path has changes
+// between the specified tag and HEAD.
+func (r *Runner) ModuleHasChanges(tag, modulePath string) (bool, error) {
+	out, err := r.run("diff", "--name-only", tag, "HEAD", "--", modulePath)
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
+}

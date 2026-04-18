@@ -18,6 +18,8 @@ func isAbort(err error) bool {
 
 var errAborted = errors.New("aborted")
 
+var pendingOnly bool
+
 var tagCmd = &cobra.Command{
 	Use:   "tag [module-path]",
 	Short: "Create a version tag for a module",
@@ -30,6 +32,7 @@ Ensures the repository is on the main branch and up to date before tagging.`,
 }
 
 func init() {
+	tagCmd.Flags().BoolVar(&pendingOnly, "pending", false, "only show modules with changes since their latest tag")
 	rootCmd.AddCommand(tagCmd)
 }
 
@@ -79,7 +82,17 @@ func runTag(cmd *cobra.Command, args []string) error {
 	allParsed := module.ParseAllTags(tags)
 	grouped := module.GroupTagsByModule(allParsed)
 
-	// Determine module path
+	if pendingOnly && len(args) == 0 {
+		modules, err = filterPendingModules(gitRunner, modules, grouped)
+		if err != nil {
+			return err
+		}
+		if len(modules) == 0 {
+			fmt.Println("No modules with pending changes.")
+			return nil
+		}
+	}
+
 	var modulePath string
 	if len(args) > 0 {
 		modulePath = args[0]
@@ -93,16 +106,16 @@ func runTag(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Validate the module path exists in the current tree
-	found := false
-	for _, m := range modules {
-		if m.Path == modulePath {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !module.ContainsPath(modules, modulePath) {
 		return fmt.Errorf("module %q not found in repository (no .tf files in that directory)", modulePath)
+	}
+
+	if pendingOnly && len(args) > 0 {
+		if pending, err := modulePending(gitRunner, modulePath, grouped); err != nil {
+			return err
+		} else if !pending {
+			return fmt.Errorf("module %q has no pending changes", modulePath)
+		}
 	}
 
 	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
@@ -236,4 +249,30 @@ func selectModule(modules []module.Module, grouped map[string][]module.TagInfo) 
 	}
 
 	return selected, nil
+}
+
+func modulePending(gitRunner *git.Runner, modulePath string, grouped map[string][]module.TagInfo) (bool, error) {
+	latest := module.LatestVersion(grouped[modulePath])
+	if latest == nil {
+		return true, nil
+	}
+	changed, err := gitRunner.ModuleHasChanges(latest.Tag, modulePath)
+	if err != nil {
+		return false, fmt.Errorf("checking changes for %s: %w", modulePath, err)
+	}
+	return changed, nil
+}
+
+func filterPendingModules(gitRunner *git.Runner, modules []module.Module, grouped map[string][]module.TagInfo) ([]module.Module, error) {
+	var pending []module.Module
+	for _, m := range modules {
+		ok, err := modulePending(gitRunner, m.Path, grouped)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			pending = append(pending, m)
+		}
+	}
+	return pending, nil
 }

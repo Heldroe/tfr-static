@@ -318,7 +318,14 @@ tfr-static tag
 
 # Tag a specific module
 tfr-static tag hetzner/server
+
+# Only show modules with changes since their latest tag
+tfr-static tag --pending
 ```
+
+| Flag | Description | Default |
+|---|---|---|
+| `--pending` | Only show modules with changes since their latest tag | `false` |
 
 The tag command:
 
@@ -335,6 +342,8 @@ The tag command:
 6. Optionally pushes the tag to the remote
 
 For new modules with no existing tags, bumping starts from `0.0.0`.
+
+The `--pending` flag filters the module list to only those with changes on the main branch since their latest tag. Modules with no tags at all are always included (they need their first version). This is useful for identifying which modules have unreleased work.
 
 ### `tfr-static serve`
 

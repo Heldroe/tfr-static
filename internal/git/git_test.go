@@ -264,3 +264,77 @@ func TestArchiveModuleDeletedInCurrentTree(t *testing.T) {
 		t.Error("archive file is empty")
 	}
 }
+
+func TestModuleHasChanges(t *testing.T) {
+	dir := setupRepo(t)
+	r := NewRunner(dir)
+
+	changed, err := r.ModuleHasChanges("mymod/sub-1.0.0", "mymod/sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("expected no changes right after tagging")
+	}
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+
+	os.WriteFile(filepath.Join(dir, "mymod", "sub", "extra.tf"), []byte("resource {}"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "add extra file")
+
+	changed, err = r.ModuleHasChanges("mymod/sub-1.0.0", "mymod/sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changes after modifying module")
+	}
+}
+
+func TestModuleHasChanges_UnrelatedChange(t *testing.T) {
+	dir := setupRepo(t)
+	r := NewRunner(dir)
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+
+	os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("hello"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "unrelated change")
+
+	changed, err := r.ModuleHasChanges("mymod/sub-1.0.0", "mymod/sub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("expected no changes when only unrelated files changed")
+	}
+}

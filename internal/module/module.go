@@ -169,6 +169,16 @@ func NextVersion(current *semver.Version, bump string) (*semver.Version, error) 
 	return &next, nil
 }
 
+// ContainsPath reports whether any module in the slice has the given path.
+func ContainsPath(modules []Module, path string) bool {
+	for _, m := range modules {
+		if m.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
 // FilterTagsForModule filters parsed tags to only those matching a module path.
 func FilterTagsForModule(tags []TagInfo, modulePath string) []TagInfo {
 	var result []TagInfo
