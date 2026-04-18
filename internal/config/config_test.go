@@ -23,6 +23,7 @@ invalidation_full_url  = true
 invalidation_base_url  = "https://cdn.example.com"
 invalidation_url_encode = true
 invalidation_dirs       = true
+favicon_dir             = "/img/favicon"
 `
 	os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644)
 
@@ -74,6 +75,9 @@ invalidation_dirs       = true
 	}
 	if fc.InvalidationDirs == nil || !*fc.InvalidationDirs {
 		t.Error("InvalidationDirs should be true")
+	}
+	if fc.FaviconDir == nil || *fc.FaviconDir != "/img/favicon" {
+		t.Errorf("FaviconDir = %v", fc.FaviconDir)
 	}
 }
 

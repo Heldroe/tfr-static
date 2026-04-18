@@ -74,6 +74,7 @@ invalidation_full_url   = true
 invalidation_base_url   = "https://cdn.example.com"
 invalidation_url_encode = false
 invalidation_dirs       = false
+favicon_dir             = "img/favicon"
 ```
 
 All fields are optional. Unknown fields will cause an error to catch typos early.
@@ -107,6 +108,7 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_INVALIDATION_BASE_URL` | `--invalidation-base-url` |
 | `TFR_INVALIDATION_URL_ENCODE` | `--invalidation-url-encode` |
 | `TFR_INVALIDATION_DIRS` | `--invalidation-dirs` |
+| `TFR_FAVICON_DIR` | `--favicon-dir` |
 | `TFR_ADDR` | `--addr` (serve) |
 
 ## Commands
@@ -175,6 +177,7 @@ tfr-static publish --all --gzip
 | `--invalidation-dirs` | Include directory paths (trailing `/`) for index files in invalidation output | `false` |
 | `--html` | Generate HTML documentation pages for browsing modules | `false` |
 | `--html-index` | Filename for HTML index pages | `index.html` |
+| `--favicon-dir` | Directory containing favicon assets for HTML pages | *(disabled)* |
 | `--terraform-docs` | Enrich HTML pages with auto-generated terraform-docs output (inputs, outputs, etc.) | `false` |
 | `--gzip` | Gzip-compress text files for pre-compressed upload to S3 | `false` |
 

@@ -25,7 +25,8 @@ type FileConfig struct {
 	InvalidationFullURL  *bool   `hcl:"invalidation_full_url,optional"`
 	InvalidationBaseURL  *string `hcl:"invalidation_base_url,optional"`
 	InvalidationURLEncode *bool  `hcl:"invalidation_url_encode,optional"`
-	InvalidationDirs      *bool  `hcl:"invalidation_dirs,optional"`
+	InvalidationDirs      *bool   `hcl:"invalidation_dirs,optional"`
+	FaviconDir            *string `hcl:"favicon_dir,optional"`
 }
 
 // Config holds the resolved configuration for tfr-static.
@@ -45,6 +46,7 @@ type Config struct {
 	InvalidationBaseURL   string
 	InvalidationURLEncode bool
 	InvalidationDirs      bool
+	FaviconDir            string
 }
 
 // LoadFileConfig reads the .tfr-static.hcl config file from the given directory.

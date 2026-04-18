@@ -55,6 +55,7 @@ func init() {
 	publishCmd.Flags().String("invalidation-base-url", "", "override the base URL used for invalidation paths (requires --invalidation-full-url)")
 	publishCmd.Flags().Bool("invalidation-url-encode", false, "URL-encode invalidation paths")
 	publishCmd.Flags().Bool("invalidation-dirs", false, "include directory paths (trailing /) for index files in invalidation output")
+	publishCmd.Flags().String("favicon-dir", "", "directory containing favicon assets for HTML pages")
 	publishCmd.Flags().Bool("html", false, "generate HTML documentation pages")
 	publishCmd.Flags().String("html-index", "index.html", "filename for HTML index pages")
 	publishCmd.Flags().Bool("gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
@@ -146,6 +147,9 @@ func runPublish(cmd *cobra.Command, args []string) error {
 			}
 			gen := registry.NewHTMLGenerator(gitRunner, cfg.OutputDir, cfg.HTMLIndex)
 			gen.ReadmeReader = reader
+			if err := setupFavicons(gen); err != nil {
+				return err
+			}
 			allGrouped := groupedFromGit(gitRunner)
 
 			switch {
@@ -450,7 +454,21 @@ func generateHTML(gitRunner *git.Runner, outputDir, indexFile string, reader reg
 	}
 	gen := registry.NewHTMLGenerator(gitRunner, outputDir, indexFile)
 	gen.ReadmeReader = reader
+	if err := setupFavicons(gen); err != nil {
+		return err
+	}
 	return gen.GenerateAll(grouped)
+}
+
+func setupFavicons(gen *registry.HTMLGenerator) error {
+	if cfg.FaviconDir == "" {
+		return nil
+	}
+	urlPath := cfg.FaviconDir
+	if !strings.HasPrefix(urlPath, "/") {
+		urlPath = "/" + urlPath
+	}
+	return gen.ScanFaviconDir(cfg.FaviconDir, urlPath)
 }
 
 func groupedFromGit(gitRunner *git.Runner) map[string][]module.TagInfo {

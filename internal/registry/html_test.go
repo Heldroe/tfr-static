@@ -400,6 +400,122 @@ func assertFileContains(t *testing.T, path, substr string) {
 	}
 }
 
+func TestScanFaviconDir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "favicon-96x96.png"), []byte("png"), 0o644)
+	os.WriteFile(filepath.Join(dir, "favicon-32x32.png"), []byte("png"), 0o644)
+	os.WriteFile(filepath.Join(dir, "favicon.svg"), []byte("<svg/>"), 0o644)
+	os.WriteFile(filepath.Join(dir, "favicon.ico"), []byte("ico"), 0o644)
+	os.WriteFile(filepath.Join(dir, "apple-touch-icon.png"), []byte("png"), 0o644)
+	os.WriteFile(filepath.Join(dir, "site.webmanifest"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("x"), 0o644)
+
+	gen := NewHTMLGenerator(nil, t.TempDir(), "index.html")
+	if err := gen.ScanFaviconDir(dir, "/img/favicon"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(gen.Favicons) != 5 {
+		t.Fatalf("expected 5 favicon entries, got %d: %+v", len(gen.Favicons), gen.Favicons)
+	}
+	if gen.ManifestHref != "/img/favicon/site.webmanifest" {
+		t.Errorf("ManifestHref = %q", gen.ManifestHref)
+	}
+
+	tags := make([]string, len(gen.Favicons))
+	for i, f := range gen.Favicons {
+		tags[i] = string(f.Tag)
+	}
+	joined := strings.Join(tags, "\n")
+	for _, want := range []string{
+		`rel="icon" type="image/png"`,
+		`rel="icon" type="image/svg+xml"`,
+		`rel="shortcut icon"`,
+		`rel="apple-touch-icon"`,
+		`sizes="96x96"`,
+		`sizes="32x32"`,
+		`sizes="180x180"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("favicon tags missing %q", want)
+		}
+	}
+}
+
+func TestScanFaviconDir_Empty(t *testing.T) {
+	dir := t.TempDir()
+	gen := NewHTMLGenerator(nil, t.TempDir(), "index.html")
+	if err := gen.ScanFaviconDir(dir, "/favicons"); err != nil {
+		t.Fatal(err)
+	}
+	if len(gen.Favicons) != 0 {
+		t.Errorf("expected 0 favicons, got %d", len(gen.Favicons))
+	}
+	if gen.ManifestHref != "" {
+		t.Errorf("expected empty ManifestHref, got %q", gen.ManifestHref)
+	}
+}
+
+func TestHTMLGenerator_FaviconsInOutput(t *testing.T) {
+	_, gitRunner := setupHTMLTestRepo(t)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+
+	faviconDir := t.TempDir()
+	os.WriteFile(filepath.Join(faviconDir, "favicon-96x96.png"), []byte("png"), 0o644)
+	os.WriteFile(filepath.Join(faviconDir, "favicon.svg"), []byte("<svg/>"), 0o644)
+	os.WriteFile(filepath.Join(faviconDir, "favicon.ico"), []byte("ico"), 0o644)
+	os.WriteFile(filepath.Join(faviconDir, "apple-touch-icon.png"), []byte("png"), 0o644)
+	os.WriteFile(filepath.Join(faviconDir, "site.webmanifest"), []byte("{}"), 0o644)
+
+	if err := gen.ScanFaviconDir(faviconDir, "/img/favicon"); err != nil {
+		t.Fatal(err)
+	}
+
+	grouped := map[string][]module.TagInfo{
+		"hetzner/server": {
+			{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+		},
+	}
+
+	if err := gen.GenerateAll(grouped); err != nil {
+		t.Fatal(err)
+	}
+
+	rootIndex := filepath.Join(outputDir, "index.html")
+	assertFileContains(t, rootIndex, `rel="icon" type="image/png" href="/img/favicon/favicon-96x96.png" sizes="96x96"`)
+	assertFileContains(t, rootIndex, `rel="icon" type="image/svg+xml" href="/img/favicon/favicon.svg"`)
+	assertFileContains(t, rootIndex, `rel="shortcut icon" href="/img/favicon/favicon.ico"`)
+	assertFileContains(t, rootIndex, `rel="apple-touch-icon" sizes="180x180" href="/img/favicon/apple-touch-icon.png"`)
+	assertFileContains(t, rootIndex, `rel="manifest" href="/img/favicon/site.webmanifest"`)
+
+	modIndex := filepath.Join(outputDir, "hetzner", "server", "index.html")
+	assertFileContains(t, modIndex, `href="/img/favicon/favicon.ico"`)
+
+	verIndex := filepath.Join(outputDir, "hetzner", "server", "1.0.0", "index.html")
+	assertFileContains(t, verIndex, `href="/img/favicon/favicon.ico"`)
+}
+
+func TestHTMLGenerator_NoFavicons(t *testing.T) {
+	_, gitRunner := setupHTMLTestRepo(t)
+	outputDir := t.TempDir()
+	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+
+	grouped := map[string][]module.TagInfo{
+		"hetzner/server": {
+			{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+		},
+	}
+
+	if err := gen.GenerateAll(grouped); err != nil {
+		t.Fatal(err)
+	}
+
+	rootIndex := filepath.Join(outputDir, "index.html")
+	assertFileNotContains(t, rootIndex, "favicon")
+	assertFileNotContains(t, rootIndex, "manifest")
+}
+
 func assertFileNotContains(t *testing.T, path, substr string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

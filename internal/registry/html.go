@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -71,12 +72,19 @@ func EnrichedReadmeReader(base ReadmeReader, repoRoot string) ReadmeReader {
 	}
 }
 
+// FaviconEntry holds a pre-rendered <link> tag for a favicon asset.
+type FaviconEntry struct {
+	Tag template.HTML
+}
+
 // HTMLGenerator creates HTML documentation pages for the registry.
 type HTMLGenerator struct {
 	Git          *git.Runner
 	OutputDir    string
 	IndexFile    string
 	ReadmeReader ReadmeReader
+	Favicons     []FaviconEntry
+	ManifestHref string
 }
 
 // NewHTMLGenerator creates a new HTMLGenerator.
@@ -91,8 +99,58 @@ func NewHTMLGenerator(gitRunner *git.Runner, outputDir, indexFile string) *HTMLG
 	}
 }
 
+var pngSizePattern = regexp.MustCompile(`^favicon-(\d+x\d+)\.png$`)
+
+// ScanFaviconDir scans a directory for known favicon assets and populates
+// the generator's Favicons and ManifestHref fields. The faviconURLDir is the
+// URL path prefix where assets will be served (e.g. "/img/favicon").
+func (g *HTMLGenerator) ScanFaviconDir(fsDir, faviconURLDir string) error {
+	entries, err := os.ReadDir(fsDir)
+	if err != nil {
+		return fmt.Errorf("reading favicon directory %s: %w", fsDir, err)
+	}
+
+	urlDir := strings.TrimRight(faviconURLDir, "/")
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		href := urlDir + "/" + name
+
+		var tag string
+		if m := pngSizePattern.FindStringSubmatch(name); m != nil {
+			tag = fmt.Sprintf(`<link rel="icon" type="image/png" href="%s" sizes="%s" />`, href, m[1])
+		} else if name == "favicon.svg" {
+			tag = fmt.Sprintf(`<link rel="icon" type="image/svg+xml" href="%s" />`, href)
+		} else if name == "favicon.ico" {
+			tag = fmt.Sprintf(`<link rel="shortcut icon" href="%s" />`, href)
+		} else if name == "apple-touch-icon.png" {
+			tag = fmt.Sprintf(`<link rel="apple-touch-icon" sizes="180x180" href="%s" />`, href)
+		} else if name == "site.webmanifest" {
+			g.ManifestHref = href
+		}
+		if tag != "" {
+			g.Favicons = append(g.Favicons, FaviconEntry{Tag: template.HTML(tag)})
+		}
+	}
+
+	return nil
+}
+
+func (g *HTMLGenerator) headMeta() headMeta {
+	return headMeta{Favicons: g.Favicons, ManifestHref: g.ManifestHref}
+}
+
+type headMeta struct {
+	Favicons     []FaviconEntry
+	ManifestHref string
+}
+
 type rootPageData struct {
 	Modules []rootModuleEntry
+	headMeta
 }
 
 type rootModuleEntry struct {
@@ -105,6 +163,7 @@ type modulePageData struct {
 	ModulePath string
 	Versions   []string
 	ReadmeHTML template.HTML
+	headMeta
 }
 
 type versionPageData struct {
@@ -113,6 +172,7 @@ type versionPageData struct {
 	ArchiveURL          string
 	ArchiveDownloadName string
 	ReadmeHTML          template.HTML
+	headMeta
 }
 
 // GenerateAll generates the complete HTML documentation tree.
@@ -197,7 +257,7 @@ func (g *HTMLGenerator) generateRootIndex(grouped map[string][]module.TagInfo) e
 		return entries[i].Path < entries[j].Path
 	})
 
-	data := rootPageData{Modules: entries}
+	data := rootPageData{Modules: entries, headMeta: g.headMeta()}
 	return g.writeTemplate(filepath.Join(g.OutputDir, g.IndexFile), rootTmpl, data)
 }
 
@@ -217,6 +277,7 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 		ModulePath: modPath,
 		Versions:   versions,
 		ReadmeHTML: readmeHTML,
+		headMeta:   g.headMeta(),
 	}
 	dir := filepath.Join(g.OutputDir, modPath)
 	return g.writeTemplate(filepath.Join(dir, g.IndexFile), moduleTmpl, data)
@@ -235,6 +296,7 @@ func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 		ArchiveURL:          archiveURL,
 		ArchiveDownloadName: descriptiveArchiveName(tag.ModulePath, tag.Version),
 		ReadmeHTML:          readmeHTML,
+		headMeta:            g.headMeta(),
 	}
 	dir := filepath.Join(g.OutputDir, tag.ModulePath, tag.Version.Original())
 	return g.writeTemplate(filepath.Join(dir, g.IndexFile), versionTmpl, data)
@@ -300,6 +362,10 @@ func relRootVersion(modPath string) string {
 	return strings.Join(parts, "/")
 }
 
+const faviconTmpl = `{{range .Favicons}}{{.Tag}}
+{{end}}{{if .ManifestHref}}<link rel="manifest" href="{{.ManifestHref}}" />
+{{end}}`
+
 var rootTmpl = template.Must(template.New("root").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -307,7 +373,7 @@ var rootTmpl = template.Must(template.New("root").Parse(`<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Terraform Module Registry</title>
 <style>` + cssStyles + `</style>
-</head>
+` + faviconTmpl + `</head>
 <body>
 <div class="container">
 <h1>Terraform Module Registry</h1>
@@ -339,7 +405,7 @@ var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.ModulePath}}</title>
 <style>` + cssStyles + `</style>
-</head>
+` + faviconTmpl + `</head>
 <body>
 <div class="container">
 <p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
@@ -368,7 +434,7 @@ var versionTmpl = template.Must(template.New("version").Funcs(template.FuncMap{
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.ModulePath}} {{.Version}}</title>
 <style>` + cssStyles + `</style>
-</head>
+` + faviconTmpl + `</head>
 <body>
 <div class="container">
 <p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
