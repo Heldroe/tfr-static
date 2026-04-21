@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/viper"
 	"github.com/terraform-docs/terraform-docs/format"
 	"github.com/terraform-docs/terraform-docs/print"
 	"github.com/terraform-docs/terraform-docs/terraform"
@@ -35,13 +36,17 @@ func GenerateWithConfig(moduleDir, configDir string) (string, error) {
 	config.Formatter = "markdown table"
 
 	if cfgFile := findConfig(configDir); cfgFile != "" {
-		if fileCfg, err := print.ReadConfig(filepath.Dir(cfgFile), filepath.Base(cfgFile)); err == nil {
-			fileCfg.ModuleRoot = moduleDir
-			if fileCfg.Formatter == "" {
-				fileCfg.Formatter = "markdown table"
-			}
-			config = fileCfg
+		v := viper.New()
+		v.SetConfigFile(cfgFile)
+		if err := v.ReadInConfig(); err != nil {
+			return "", fmt.Errorf("reading terraform-docs config %s: %w", cfgFile, err)
 		}
+		if err := v.Unmarshal(config); err != nil {
+			return "", fmt.Errorf("parsing terraform-docs config %s: %w", cfgFile, err)
+		}
+		fmt.Fprintf(os.Stderr, "terraform-docs: loaded config from %s\n", cfgFile)
+	} else {
+		fmt.Fprintf(os.Stderr, "terraform-docs: no config file found (searched %s), using defaults\n", configDir)
 	}
 
 	config.Parse()
