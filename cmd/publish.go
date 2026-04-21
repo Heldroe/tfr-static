@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -60,75 +61,50 @@ func init() {
 	publishCmd.Flags().String("html-base", "", "path to a custom base HTML template file")
 	publishCmd.Flags().Bool("gzip", false, "gzip-compress text files in the output directory for pre-compressed S3 upload")
 	publishCmd.Flags().Bool("terraform-docs", false, "generate terraform-docs output in HTML pages")
+
+	// --dev and --module coexist (dev-publish a single module); all other pairs are mutually exclusive.
+	publishCmd.MarkFlagsOneRequired("tag", "module", "all", "dev")
+	publishCmd.MarkFlagsMutuallyExclusive("tag", "module", "all")
+	publishCmd.MarkFlagsMutuallyExclusive("tag", "dev")
+	publishCmd.MarkFlagsMutuallyExclusive("all", "dev")
+
 	rootCmd.AddCommand(publishCmd)
 }
 
 func runPublish(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	if cfg.BaseURL == "" {
 		return fmt.Errorf("--base-url is required (or set TFR_BASE_URL)")
 	}
-
 	if cfg.InvalidationBaseURL != "" && !cfg.InvalidationFullURL {
 		return fmt.Errorf("invalidation_base_url requires invalidation_full_url to be enabled")
 	}
-	invalidationBaseURL := ""
-	if cfg.InvalidationFullURL {
-		invalidationBaseURL = cfg.InvalidationBaseURL
-		if invalidationBaseURL == "" {
-			invalidationBaseURL = cfg.BaseURL
-		}
-		invalidationBaseURL = strings.TrimRight(invalidationBaseURL, "/")
-	}
 
-	// --dev is mutually exclusive with --tag and --all, but compatible with --module
 	if publishDev {
-		if publishTag != "" {
-			return fmt.Errorf("--dev and --tag are mutually exclusive")
-		}
-		if publishAll {
-			return fmt.Errorf("--dev and --all are mutually exclusive")
-		}
 		return runPublishDev(cmd)
 	}
 
-	flagCount := 0
-	if publishTag != "" {
-		flagCount++
-	}
-	if publishModule != "" {
-		flagCount++
-	}
-	if publishAll {
-		flagCount++
-	}
-	if flagCount == 0 {
-		return fmt.Errorf("one of --tag, --module, --all, or --dev is required")
-	}
-	if flagCount > 1 {
-		return fmt.Errorf("only one of --tag, --module, or --all may be specified")
-	}
-
-	var invalidationFormat registry.InvalidationFormat
-	if cfg.InvalidationFile != "" {
-		var err error
-		invalidationFormat, err = registry.ParseInvalidationFormat(cfg.InvalidationFormat)
-		if err != nil {
-			return err
-		}
+	invalidationFormat, err := resolveInvalidationFormat()
+	if err != nil {
+		return err
 	}
 
 	gitRunner := git.NewRunner(cfg.RepoPath)
 	publisher := registry.NewPublisher(gitRunner, cfg.OutputDir, cfg.BaseURL, cfg.ModulesPath)
 
+	grouped, err := module.LoadAll(ctx, gitRunner)
+	if err != nil {
+		return fmt.Errorf("listing tags: %w", err)
+	}
+
 	var invalidationPaths []string
-	var err error
 	switch {
 	case publishTag != "":
-		invalidationPaths, err = publishSingleTag(publisher, gitRunner, publishTag)
+		invalidationPaths, err = publishSingleTag(ctx, publisher, grouped, publishTag)
 	case publishModule != "":
-		invalidationPaths, err = publishModuleVersions(publisher, gitRunner, publishModule)
+		invalidationPaths, err = publishModuleVersions(ctx, publisher, grouped, publishModule)
 	case publishAll:
-		invalidationPaths, err = publishAllModules(publisher, gitRunner)
+		invalidationPaths, err = publishAllModules(ctx, publisher, grouped)
 	}
 	if err != nil {
 		return err
@@ -138,75 +114,108 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		if err := publisher.GenerateServiceDiscovery(); err != nil {
 			return fmt.Errorf("generating service discovery: %w", err)
 		}
-
-		if cfg.HTML {
-			repoRoot, _ := gitRunner.TopLevel()
-			reader := registry.GitReadmeReader(gitRunner)
-			if cfg.TerraformDocs && repoRoot != "" {
-				reader = registry.EnrichedReadmeReader(reader, repoRoot, gitRunner)
-			}
-			gen, err := newHTMLGenerator(gitRunner, reader)
-			if err != nil {
-				return err
-			}
-			allGrouped := groupedFromGit(gitRunner)
-
-			switch {
-			case publishTag != "":
-				info, _ := module.ParseTag(publishTag)
-				moduleTags := allGrouped[info.ModulePath]
-				if err := gen.GenerateForVersion(*info, moduleTags, allGrouped); err != nil {
-					return fmt.Errorf("generating HTML documentation: %w", err)
-				}
-			case publishModule != "":
-				moduleTags := allGrouped[publishModule]
-				if err := gen.GenerateForModule(publishModule, moduleTags, allGrouped); err != nil {
-					return fmt.Errorf("generating HTML documentation: %w", err)
-				}
-			case publishAll:
-				if err := gen.GenerateAll(allGrouped); err != nil {
-					return fmt.Errorf("generating HTML documentation: %w", err)
-				}
-			}
-			fmt.Println("HTML documentation generated")
-		}
-
-		if cfg.Gzip {
-			count, err := registry.GzipTextFiles(cfg.OutputDir)
-			if err != nil {
-				return fmt.Errorf("gzip compressing files: %w", err)
-			}
-			fmt.Printf("Gzip-compressed %d text files\n", count)
-		}
-	}
-
-	if cfg.InvalidationFile != "" && len(invalidationPaths) > 0 {
-		invalidationPaths = dedup(invalidationPaths)
-		for i, p := range invalidationPaths {
-			if invalidationBaseURL != "" {
-				p = invalidationBaseURL + p
-			}
-			if cfg.InvalidationURLEncode {
-				p = url.QueryEscape(p)
-			}
-			invalidationPaths[i] = p
-		}
-		if err := registry.WriteInvalidationFile(invalidationPaths, cfg.InvalidationFile, invalidationFormat); err != nil {
+		if err := generateTaggedDocs(ctx, gitRunner, grouped); err != nil {
 			return err
 		}
-		fmt.Printf("Invalidation file written to %s (%s format, %d paths)\n", cfg.InvalidationFile, cfg.InvalidationFormat, len(invalidationPaths))
+		if err := runGzip(); err != nil {
+			return err
+		}
 	}
 
+	return writeInvalidationFile(invalidationPaths, invalidationFormat)
+}
+
+func resolveInvalidationFormat() (registry.InvalidationFormat, error) {
+	if cfg.InvalidationFile == "" {
+		return registry.InvalidationFormat(""), nil
+	}
+	return registry.ParseInvalidationFormat(cfg.InvalidationFormat)
+}
+
+func generateTaggedDocs(ctx context.Context, gitRunner *git.Runner, grouped map[string][]module.TagInfo) error {
+	if !cfg.HTML {
+		return nil
+	}
+
+	repoRoot, _ := gitRunner.TopLevel(ctx)
+	reader := registry.GitReadmeReader(gitRunner)
+	if cfg.TerraformDocs && repoRoot != "" {
+		reader = registry.EnrichedReadmeReader(reader, repoRoot, gitRunner)
+	}
+	gen, err := newHTMLGenerator(gitRunner, reader)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case publishTag != "":
+		info, _ := module.ParseTag(publishTag)
+		if err := gen.GenerateForVersion(ctx, *info, grouped[info.ModulePath], grouped); err != nil {
+			return fmt.Errorf("generating HTML documentation: %w", err)
+		}
+	case publishModule != "":
+		if err := gen.GenerateForModule(ctx, publishModule, grouped[publishModule], grouped); err != nil {
+			return fmt.Errorf("generating HTML documentation: %w", err)
+		}
+	case publishAll:
+		if err := gen.GenerateAll(ctx, grouped); err != nil {
+			return fmt.Errorf("generating HTML documentation: %w", err)
+		}
+	}
+	fmt.Println("HTML documentation generated")
 	return nil
 }
 
-func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string) ([]string, error) {
+func runGzip() error {
+	if !cfg.Gzip {
+		return nil
+	}
+	count, err := registry.GzipTextFiles(cfg.OutputDir)
+	if err != nil {
+		return fmt.Errorf("gzip compressing files: %w", err)
+	}
+	fmt.Printf("Gzip-compressed %d text files\n", count)
+	return nil
+}
+
+func writeInvalidationFile(paths []string, format registry.InvalidationFormat) error {
+	if cfg.InvalidationFile == "" || len(paths) == 0 {
+		return nil
+	}
+
+	invalidationBaseURL := ""
+	if cfg.InvalidationFullURL {
+		invalidationBaseURL = cfg.InvalidationBaseURL
+		if invalidationBaseURL == "" {
+			invalidationBaseURL = cfg.BaseURL
+		}
+		invalidationBaseURL = strings.TrimRight(invalidationBaseURL, "/")
+	}
+
+	paths = dedup(paths)
+	for i, p := range paths {
+		if invalidationBaseURL != "" {
+			p = invalidationBaseURL + p
+		}
+		if cfg.InvalidationURLEncode {
+			p = url.QueryEscape(p)
+		}
+		paths[i] = p
+	}
+	if err := registry.WriteInvalidationFile(paths, cfg.InvalidationFile, format); err != nil {
+		return err
+	}
+	fmt.Printf("Invalidation file written to %s (%s format, %d paths)\n", cfg.InvalidationFile, cfg.InvalidationFormat, len(paths))
+	return nil
+}
+
+func publishSingleTag(ctx context.Context, pub *registry.Publisher, grouped map[string][]module.TagInfo, tag string) ([]string, error) {
 	info, err := module.ParseTag(tag)
 	if err != nil {
 		return nil, fmt.Errorf("invalid tag %q: %w", tag, err)
 	}
 
-	exists, err := gitRunner.PathExistsAtTag(info.Tag, info.ModulePath)
+	exists, err := pub.Git.PathExistsAtTag(ctx, info.Tag, info.ModulePath)
 	if err != nil {
 		return nil, fmt.Errorf("checking module path: %w", err)
 	}
@@ -225,15 +234,11 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 	}
 
 	fmt.Printf("Publishing %s version %s...\n", info.ModulePath, info.Version)
-	if err := pub.PublishVersion(*info); err != nil {
+	if err := pub.PublishVersion(ctx, *info); err != nil {
 		return nil, err
 	}
 
-	versions, err := collectModuleVersions(gitRunner, info.ModulePath)
-	if err != nil {
-		return nil, fmt.Errorf("collecting versions: %w", err)
-	}
-	if err := pub.GenerateVersionsJSON(info.ModulePath, versions); err != nil {
+	if err := pub.GenerateVersionsJSON(info.ModulePath, tagVersions(grouped[info.ModulePath])); err != nil {
 		return nil, err
 	}
 
@@ -246,25 +251,14 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 	return paths, nil
 }
 
-func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modulePath string) ([]string, error) {
-	tags, err := gitRunner.ListTags()
-	if err != nil {
-		return nil, fmt.Errorf("listing tags: %w", err)
-	}
-
-	allParsed := module.ParseAllTags(tags)
-	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
-
+func publishModuleVersions(ctx context.Context, pub *registry.Publisher, grouped map[string][]module.TagInfo, modulePath string) ([]string, error) {
+	moduleTags := grouped[modulePath]
 	if len(moduleTags) == 0 {
 		return nil, fmt.Errorf("no tags found for module %q", modulePath)
 	}
 
 	module.SortVersionsAsc(moduleTags)
-
-	var versions []*semver.Version
-	for _, t := range moduleTags {
-		versions = append(versions, t.Version)
-	}
+	versions := tagVersions(moduleTags)
 
 	paths := registry.InvalidationPathsForModuleRebuild(modulePath, versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
 
@@ -281,7 +275,7 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 
 	for _, t := range moduleTags {
 		fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
-		if err := pub.PublishVersion(t); err != nil {
+		if err := pub.PublishVersion(ctx, t); err != nil {
 			return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 		}
 	}
@@ -294,27 +288,15 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 	return paths, nil
 }
 
-func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string, error) {
-	tags, err := gitRunner.ListTags()
-	if err != nil {
-		return nil, fmt.Errorf("listing tags: %w", err)
-	}
-
-	allParsed := module.ParseAllTags(tags)
-	if len(allParsed) == 0 {
+func publishAllModules(ctx context.Context, pub *registry.Publisher, grouped map[string][]module.TagInfo) ([]string, error) {
+	if len(grouped) == 0 {
 		return nil, fmt.Errorf("no module tags found in repository")
 	}
-
-	grouped := module.GroupTagsByModule(allParsed)
 
 	moduleVersions := make(map[string][]*semver.Version, len(grouped))
 	for modPath, modTags := range grouped {
 		module.SortVersionsAsc(modTags)
-		versions := make([]*semver.Version, len(modTags))
-		for i, t := range modTags {
-			versions[i] = t.Version
-		}
-		moduleVersions[modPath] = versions
+		moduleVersions[modPath] = tagVersions(modTags)
 	}
 
 	var paths []string
@@ -336,7 +318,7 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 	for modPath, modTags := range grouped {
 		for _, t := range modTags {
 			fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
-			if err := pub.PublishVersion(t); err != nil {
+			if err := pub.PublishVersion(ctx, t); err != nil {
 				return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 			}
 		}
@@ -349,37 +331,20 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 	return paths, nil
 }
 
+var devVersion = semver.MustParse("0.0.0-dev")
+
 func runPublishDev(cmd *cobra.Command) error {
+	ctx := cmd.Context()
 	gitRunner := git.NewRunner(cfg.RepoPath)
-	repoRoot, err := gitRunner.TopLevel()
+	repoRoot, err := gitRunner.TopLevel(ctx)
 	if err != nil {
 		return fmt.Errorf("resolving repository root: %w", err)
 	}
 
-	modules, err := module.DiscoverModules(repoRoot)
+	modules, err := discoverDevModules(repoRoot)
 	if err != nil {
-		return fmt.Errorf("discovering modules: %w", err)
+		return err
 	}
-
-	if publishModule != "" {
-		var filtered []module.Module
-		for _, m := range modules {
-			if m.Path == publishModule {
-				filtered = append(filtered, m)
-			}
-		}
-		if len(filtered) == 0 {
-			return fmt.Errorf("module %q not found in working tree", publishModule)
-		}
-		modules = filtered
-	}
-
-	if len(modules) == 0 {
-		return fmt.Errorf("no modules found in repository")
-	}
-
-	devVersion := semver.MustParse("0.0.0-dev")
-	publisher := registry.NewPublisher(gitRunner, cfg.OutputDir, cfg.BaseURL, cfg.ModulesPath)
 
 	if dryRun {
 		for _, m := range modules {
@@ -388,18 +353,18 @@ func runPublishDev(cmd *cobra.Command) error {
 		return nil
 	}
 
+	grouped, _ := module.LoadAll(ctx, gitRunner)
+	if grouped == nil {
+		grouped = make(map[string][]module.TagInfo)
+	}
+
+	publisher := registry.NewPublisher(gitRunner, cfg.OutputDir, cfg.BaseURL, cfg.ModulesPath)
 	for _, m := range modules {
 		fmt.Printf("Publishing %s version 0.0.0-dev from working tree...\n", m.Path)
 		if err := publisher.PublishVersionFromWorkTree(repoRoot, m.Path, devVersion); err != nil {
 			return fmt.Errorf("publishing %s: %w", m.Path, err)
 		}
-
-		// Generate versions.json with real tagged versions + dev
-		versions, err := collectModuleVersions(gitRunner, m.Path)
-		if err != nil {
-			versions = nil // no tags yet is fine
-		}
-		versions = append(versions, devVersion)
+		versions := append(tagVersions(grouped[m.Path]), devVersion)
 		if err := publisher.GenerateVersionsJSON(m.Path, versions); err != nil {
 			return fmt.Errorf("generating versions.json for %s: %w", m.Path, err)
 		}
@@ -408,42 +373,57 @@ func runPublishDev(cmd *cobra.Command) error {
 	if err := publisher.GenerateServiceDiscovery(); err != nil {
 		return fmt.Errorf("generating service discovery: %w", err)
 	}
-
-	if cfg.HTML {
-		// Build grouped TagInfo from real tags + dev entries
-		grouped := groupedFromGit(gitRunner)
-		if grouped == nil {
-			grouped = make(map[string][]module.TagInfo)
-		}
-
-		// Add dev entries for published modules
-		for _, m := range modules {
-			grouped[m.Path] = append(grouped[m.Path], module.TagInfo{
-				Tag:        m.Path + "-0.0.0-dev",
-				ModulePath: m.Path,
-				Version:    devVersion,
-			})
-		}
-
-		reader := registry.FilesystemReadmeReader(repoRoot)
-		if cfg.TerraformDocs {
-			reader = registry.EnrichedReadmeReader(reader, repoRoot, gitRunner)
-		}
-		if err := generateHTML(gitRunner, reader, grouped); err != nil {
-			return fmt.Errorf("generating HTML documentation: %w", err)
-		}
-		fmt.Println("HTML documentation generated")
+	if err := generateDevDocs(ctx, gitRunner, repoRoot, modules, grouped); err != nil {
+		return err
 	}
-
-	if cfg.Gzip {
-		count, err := registry.GzipTextFiles(cfg.OutputDir)
-		if err != nil {
-			return fmt.Errorf("gzip compressing files: %w", err)
-		}
-		fmt.Printf("Gzip-compressed %d text files\n", count)
+	if err := runGzip(); err != nil {
+		return err
 	}
 
 	fmt.Printf("\nPublished %d modules as 0.0.0-dev\n", len(modules))
+	return nil
+}
+
+func discoverDevModules(repoRoot string) ([]module.Module, error) {
+	modules, err := module.DiscoverModules(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("discovering modules: %w", err)
+	}
+
+	if publishModule != "" {
+		if !module.ContainsPath(modules, publishModule) {
+			return nil, fmt.Errorf("module %q not found in working tree", publishModule)
+		}
+		return []module.Module{{Path: publishModule}}, nil
+	}
+
+	if len(modules) == 0 {
+		return nil, fmt.Errorf("no modules found in repository")
+	}
+	return modules, nil
+}
+
+func generateDevDocs(ctx context.Context, gitRunner *git.Runner, repoRoot string, modules []module.Module, grouped map[string][]module.TagInfo) error {
+	if !cfg.HTML {
+		return nil
+	}
+
+	for _, m := range modules {
+		grouped[m.Path] = append(grouped[m.Path], module.TagInfo{
+			Tag:        m.Path + "-0.0.0-dev",
+			ModulePath: m.Path,
+			Version:    devVersion,
+		})
+	}
+
+	reader := registry.FilesystemReadmeReader(repoRoot)
+	if cfg.TerraformDocs {
+		reader = registry.EnrichedReadmeReader(reader, repoRoot, gitRunner)
+	}
+	if err := generateHTML(ctx, gitRunner, reader, grouped); err != nil {
+		return fmt.Errorf("generating HTML documentation: %w", err)
+	}
+	fmt.Println("HTML documentation generated")
 	return nil
 }
 
@@ -458,7 +438,7 @@ func newHTMLGenerator(gitRunner *git.Runner, reader registry.ReadmeReader) (*reg
 	return gen, nil
 }
 
-func generateHTML(gitRunner *git.Runner, reader registry.ReadmeReader, grouped map[string][]module.TagInfo) error {
+func generateHTML(ctx context.Context, gitRunner *git.Runner, reader registry.ReadmeReader, grouped map[string][]module.TagInfo) error {
 	if len(grouped) == 0 {
 		return nil
 	}
@@ -466,31 +446,15 @@ func generateHTML(gitRunner *git.Runner, reader registry.ReadmeReader, grouped m
 	if err != nil {
 		return err
 	}
-	return gen.GenerateAll(grouped)
+	return gen.GenerateAll(ctx, grouped)
 }
 
-func groupedFromGit(gitRunner *git.Runner) map[string][]module.TagInfo {
-	tags, err := gitRunner.ListTags()
-	if err != nil {
-		return nil
-	}
-	allParsed := module.ParseAllTags(tags)
-	return module.GroupTagsByModule(allParsed)
-}
-
-func collectModuleVersions(gitRunner *git.Runner, modulePath string) ([]*semver.Version, error) {
-	tags, err := gitRunner.ListTags()
-	if err != nil {
-		return nil, err
-	}
-	allParsed := module.ParseAllTags(tags)
-	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
-
-	var versions []*semver.Version
-	for _, t := range moduleTags {
+func tagVersions(tags []module.TagInfo) []*semver.Version {
+	versions := make([]*semver.Version, 0, len(tags))
+	for _, t := range tags {
 		versions = append(versions, t.Version)
 	}
-	return versions, nil
+	return versions
 }
 
 func dedup(items []string) []string {

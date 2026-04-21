@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"log"
+	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/logging"
 	"github.com/Heldroe/tfr-static/internal/registry"
 )
 
@@ -43,30 +47,74 @@ func init() {
 
 func runServe(cmd *cobra.Command, args []string) error {
 	if serveDev {
-		return runServeDev()
+		return runServeDev(cmd)
 	}
-	return runServeStatic()
+	return runServeStatic(cmd.Context())
 }
 
-func runServeStatic() error {
-	log.Printf("Serving static registry from %s on %s", cfg.OutputDir, serveAddr)
-	return http.ListenAndServe(serveAddr, http.FileServer(http.Dir(cfg.OutputDir)))
+func runServeStatic(ctx context.Context) error {
+	logger := logging.FromContext(ctx)
+	logger.Info("serving static registry", "dir", cfg.OutputDir, "addr", serveAddr)
+	return runHTTPServer(ctx, serveAddr, http.FileServer(http.Dir(cfg.OutputDir)))
 }
 
-func runServeDev() error {
+func runServeDev(cmd *cobra.Command) error {
+	ctx := cmd.Context()
+	logger := logging.FromContext(ctx)
 	gitRunner := git.NewRunner(cfg.RepoPath)
 
-	repoRoot, err := gitRunner.TopLevel()
+	repoRoot, err := gitRunner.TopLevel(ctx)
 	if err != nil {
 		return fmt.Errorf("resolving repository root: %w", err)
 	}
 
-	dev := registry.NewDevServer(gitRunner, repoRoot, cfg.ModulesPath)
-	dev.HTMLEnabled = true // always show HTML in dev mode
+	// Default HTML to true in dev mode, but let the user turn it off with --html=false.
+	htmlEnabled := true
+	if f := cmd.Flags().Lookup("html"); f != nil && f.Changed {
+		htmlEnabled = cfg.HTML
+	}
 
-	log.Printf("Dev registry serving from %s on %s", repoRoot, serveAddr)
-	log.Printf("Modules are served from the current working tree (including uncommitted changes)")
-	log.Printf("All version requests return the current code regardless of version")
-	log.Printf("HTML documentation enabled")
-	return http.ListenAndServe(serveAddr, dev.Handler())
+	dev := registry.NewDevServer(gitRunner, repoRoot, cfg.ModulesPath)
+	dev.HTMLEnabled = htmlEnabled
+
+	logger.Info("dev registry ready",
+		"repo", repoRoot,
+		"addr", serveAddr,
+		"html", htmlEnabled,
+	)
+	logger.Info("modules are served from the current working tree (including uncommitted changes)")
+	return runHTTPServer(ctx, serveAddr, dev.Handler())
+}
+
+func runHTTPServer(ctx context.Context, addr string, handler http.Handler) error {
+	logger := logging.FromContext(ctx)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		if !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		logger.Info("shutting down HTTP server")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown: %w", err)
+		}
+		return nil
+	}
 }

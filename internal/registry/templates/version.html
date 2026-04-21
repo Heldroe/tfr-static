@@ -1,0 +1,7 @@
+<p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
+<h1>{{.ModulePath}} <span class="version">{{.Version}}</span></h1>
+<p>Download: <a href="{{.ArchiveURL}}" download="{{.ArchiveDownloadName}}">{{.ArchiveURL}}</a></p>
+{{if .ReadmeHTML}}
+<hr>
+<div class="readme">{{.ReadmeHTML}}</div>
+{{end}}

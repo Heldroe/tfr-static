@@ -1,0 +1,12 @@
+<p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
+<h1>{{.ModulePath}}</h1>
+<h2>Versions</h2>
+<ul>
+{{range .Versions}}
+<li><a href="{{.}}/">{{.}}</a></li>
+{{end}}
+</ul>
+{{if .ReadmeHTML}}
+<hr>
+<div class="readme">{{.ReadmeHTML}}</div>
+{{end}}

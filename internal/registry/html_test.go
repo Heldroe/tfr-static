@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,7 +70,7 @@ func TestHTMLGenerator_GenerateAll(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,7 +115,7 @@ func TestHTMLGenerator_CustomIndexFile(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,7 +147,7 @@ func TestHTMLGenerator_BackLinks(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,7 +180,7 @@ func TestHTMLGenerator_GenerateForVersion(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateForVersion(newTag, moduleTags, allGrouped); err != nil {
+	if err := gen.GenerateForVersion(context.Background(), newTag, moduleTags, allGrouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -228,7 +229,7 @@ func TestHTMLGenerator_GenerateForModule(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateForModule("hetzner/server", moduleTags, allGrouped); err != nil {
+	if err := gen.GenerateForModule(context.Background(), "hetzner/server", moduleTags, allGrouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +268,7 @@ func TestHTMLGenerator_WithFilesystemReader(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,7 +325,7 @@ func TestHTMLGenerator_VersionReadmeFromTag(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -395,8 +396,8 @@ variable "new_var" {
 	base := GitReadmeReader(gitRunner)
 	reader := EnrichedReadmeReader(base, tmpDir, gitRunner)
 
-	v1Content := reader("mymod", "mymod-1.0.0")
-	v2Content := reader("mymod", "mymod-2.0.0")
+	v1Content := reader(context.Background(), "mymod", "mymod-1.0.0")
+	v2Content := reader(context.Background(), "mymod", "mymod-2.0.0")
 
 	if !strings.Contains(v1Content, "old_var") {
 		t.Errorf("v1 should contain old_var from the tagged state, got:\n%s", v1Content)
@@ -455,7 +456,7 @@ formatter: markdown document
 	base := GitReadmeReader(gitRunner)
 	reader := EnrichedReadmeReader(base, tmpDir, gitRunner)
 
-	content := reader("mymod", "mymod-1.0.0")
+	content := reader(context.Background(), "mymod", "mymod-1.0.0")
 
 	// "markdown document" formatter uses ### headers instead of tables
 	if !strings.Contains(content, "name") {
@@ -478,7 +479,7 @@ func TestHTMLGenerator_DevVersionIncluded(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 
@@ -528,7 +529,7 @@ func TestHTMLGenerator_CustomBaseTemplate(t *testing.T) {
 		},
 	}
 
-	if err := gen.GenerateAll(grouped); err != nil {
+	if err := gen.GenerateAll(context.Background(), grouped); err != nil {
 		t.Fatal(err)
 	}
 

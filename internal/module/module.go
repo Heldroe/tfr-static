@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+
+	"github.com/Heldroe/tfr-static/internal/git"
 )
 
 // Module represents a discovered terraform module.
@@ -188,6 +191,16 @@ func FilterTagsForModule(tags []TagInfo, modulePath string) []TagInfo {
 		}
 	}
 	return result
+}
+
+// LoadAll returns all parsed tags grouped by module path, using r to list tags.
+// Raw tags that don't match the expected format are skipped.
+func LoadAll(ctx context.Context, r *git.Runner) (map[string][]TagInfo, error) {
+	tags, err := r.ListTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return GroupTagsByModule(ParseAllTags(tags)), nil
 }
 
 // ParseAllTags parses a list of raw tag strings, skipping those that don't

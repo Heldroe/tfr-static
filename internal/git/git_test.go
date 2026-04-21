@@ -3,6 +3,7 @@ package git
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,8 +50,9 @@ func setupRepo(t *testing.T) string {
 func TestListTags(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	tags, err := r.ListTags()
+	tags, err := r.ListTags(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +65,9 @@ func TestListTags(t *testing.T) {
 func TestListTagsWithPrefix(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	tags, err := r.ListTagsWithPrefix("mymod/sub-")
+	tags, err := r.ListTagsWithPrefix(ctx, "mymod/sub-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +80,9 @@ func TestListTagsWithPrefix(t *testing.T) {
 func TestCurrentBranch(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	branch, err := r.CurrentBranch()
+	branch, err := r.CurrentBranch(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +94,9 @@ func TestCurrentBranch(t *testing.T) {
 func TestIsClean(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	clean, err := r.IsClean()
+	clean, err := r.IsClean(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +107,7 @@ func TestIsClean(t *testing.T) {
 	// Dirty the repo
 	os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("dirty"), 0o644)
 
-	clean, err = r.IsClean()
+	clean, err = r.IsClean(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +119,9 @@ func TestIsClean(t *testing.T) {
 func TestTagExists(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	exists, err := r.TagExists("mymod/sub-1.0.0")
+	exists, err := r.TagExists(ctx, "mymod/sub-1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +129,7 @@ func TestTagExists(t *testing.T) {
 		t.Error("expected tag to exist")
 	}
 
-	exists, err = r.TagExists("nonexistent-99.0.0")
+	exists, err = r.TagExists(ctx, "nonexistent-99.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,13 +141,14 @@ func TestTagExists(t *testing.T) {
 func TestCreateTag(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	err := r.CreateTag("mymod/sub-2.0.0", "new release")
+	err := r.CreateTag(ctx, "mymod/sub-2.0.0", "new release")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	exists, _ := r.TagExists("mymod/sub-2.0.0")
+	exists, _ := r.TagExists(ctx, "mymod/sub-2.0.0")
 	if !exists {
 		t.Error("created tag not found")
 	}
@@ -150,8 +157,9 @@ func TestCreateTag(t *testing.T) {
 func TestPathExistsAtTag(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	exists, err := r.PathExistsAtTag("mymod/sub-1.0.0", "mymod/sub")
+	exists, err := r.PathExistsAtTag(ctx, "mymod/sub-1.0.0", "mymod/sub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +167,7 @@ func TestPathExistsAtTag(t *testing.T) {
 		t.Error("expected path to exist at tag")
 	}
 
-	exists, err = r.PathExistsAtTag("mymod/sub-1.0.0", "nonexistent/path")
+	exists, err = r.PathExistsAtTag(ctx, "mymod/sub-1.0.0", "nonexistent/path")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,11 +179,12 @@ func TestPathExistsAtTag(t *testing.T) {
 func TestArchiveModule(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
 	outputDir := t.TempDir()
 	destPath := filepath.Join(outputDir, "archive.tar.gz")
 
-	err := r.ArchiveModule("mymod/sub-1.0.0", "mymod/sub", destPath)
+	err := r.ArchiveModule(ctx, "mymod/sub-1.0.0", "mymod/sub", destPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +201,12 @@ func TestArchiveModule(t *testing.T) {
 func TestArchiveModule_FlatStructure(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
 	outputDir := t.TempDir()
 	destPath := filepath.Join(outputDir, "archive.tar.gz")
 
-	err := r.ArchiveModule("mymod/sub-1.0.0", "mymod/sub", destPath)
+	err := r.ArchiveModule(ctx, "mymod/sub-1.0.0", "mymod/sub", destPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +261,7 @@ func TestArchiveModuleDeletedInCurrentTree(t *testing.T) {
 	destPath := filepath.Join(outputDir, "archive.tar.gz")
 
 	// Should still work because we archive from the tag's tree
-	err := r.ArchiveModule("mymod/sub-1.0.0", "mymod/sub", destPath)
+	err := r.ArchiveModule(context.Background(), "mymod/sub-1.0.0", "mymod/sub", destPath)
 	if err != nil {
 		t.Fatalf("archiving deleted module from old tag should work: %v", err)
 	}
@@ -268,8 +278,9 @@ func TestArchiveModuleDeletedInCurrentTree(t *testing.T) {
 func TestModuleHasChanges(t *testing.T) {
 	dir := setupRepo(t)
 	r := NewRunner(dir)
+	ctx := context.Background()
 
-	changed, err := r.ModuleHasChanges("mymod/sub-1.0.0", "mymod/sub")
+	changed, err := r.ModuleHasChanges(ctx, "mymod/sub-1.0.0", "mymod/sub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +308,7 @@ func TestModuleHasChanges(t *testing.T) {
 	run("add", ".")
 	run("commit", "-m", "add extra file")
 
-	changed, err = r.ModuleHasChanges("mymod/sub-1.0.0", "mymod/sub")
+	changed, err = r.ModuleHasChanges(ctx, "mymod/sub-1.0.0", "mymod/sub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +341,7 @@ func TestModuleHasChanges_UnrelatedChange(t *testing.T) {
 	run("add", ".")
 	run("commit", "-m", "unrelated change")
 
-	changed, err := r.ModuleHasChanges("mymod/sub-1.0.0", "mymod/sub")
+	changed, err := r.ModuleHasChanges(context.Background(), "mymod/sub-1.0.0", "mymod/sub")
 	if err != nil {
 		t.Fatal(err)
 	}

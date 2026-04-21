@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -76,7 +77,7 @@ func TestPublishVersion(t *testing.T) {
 		Version:    semver.MustParse("1.0.0"),
 	}
 
-	if err := pub.PublishVersion(tag); err != nil {
+	if err := pub.PublishVersion(context.Background(), tag); err != nil {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
@@ -116,7 +117,7 @@ func TestPublishVersionDashInModuleName(t *testing.T) {
 		Version:    semver.MustParse("0.0.1"),
 	}
 
-	if err := pub.PublishVersion(tag); err != nil {
+	if err := pub.PublishVersion(context.Background(), tag); err != nil {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
@@ -141,7 +142,7 @@ func TestPublishNestedModule(t *testing.T) {
 		Version:    semver.MustParse("1.0.0"),
 	}
 
-	if err := pub.PublishVersion(tag); err != nil {
+	if err := pub.PublishVersion(context.Background(), tag); err != nil {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
@@ -340,26 +341,6 @@ func TestGenerateDownloadHTMLEscapesURL(t *testing.T) {
 	}
 }
 
-func TestArchiveName(t *testing.T) {
-	tests := []struct {
-		modulePath string
-		version    string
-	}{
-		{"hetzner/server", "1.0.0"},
-		{"aws/ec2/security-group", "0.0.1"},
-		{"simple", "2.0.0"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.modulePath, func(t *testing.T) {
-			got := archiveName(tt.modulePath, semver.MustParse(tt.version))
-			if got != "module.tar.gz" {
-				t.Errorf("archiveName(%q, %q) = %q, want %q", tt.modulePath, tt.version, got, "module.tar.gz")
-			}
-		})
-	}
-}
-
 func TestDescriptiveArchiveName(t *testing.T) {
 	tests := []struct {
 		modulePath string
@@ -373,7 +354,7 @@ func TestDescriptiveArchiveName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.modulePath, func(t *testing.T) {
-			got := descriptiveArchiveName(tt.modulePath, semver.MustParse(tt.version))
+			got := descriptiveArchiveName(tt.modulePath, tt.version)
 			if got != tt.want {
 				t.Errorf("descriptiveArchiveName(%q, %q) = %q, want %q", tt.modulePath, tt.version, got, tt.want)
 			}
@@ -398,7 +379,7 @@ func TestEndToEndPublishAndVersions(t *testing.T) {
 
 	var versions []*semver.Version
 	for _, tag := range tags {
-		if err := pub.PublishVersion(tag); err != nil {
+		if err := pub.PublishVersion(context.Background(), tag); err != nil {
 			t.Fatalf("PublishVersion(%s) error: %v", tag.Tag, err)
 		}
 		versions = append(versions, tag.Version)

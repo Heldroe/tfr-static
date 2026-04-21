@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/Heldroe/tfr-static/internal/git"
+	"github.com/Heldroe/tfr-static/internal/logging"
 	"github.com/Heldroe/tfr-static/internal/module"
 )
 
@@ -33,49 +33,66 @@ type DevServer struct {
 
 // NewDevServer creates a DevServer.
 func NewDevServer(gitRunner *git.Runner, repoRoot, modulesPath string) *DevServer {
-	if modulesPath == "" {
-		modulesPath = "/"
-	}
-	if !strings.HasPrefix(modulesPath, "/") {
-		modulesPath = "/" + modulesPath
-	}
-	if !strings.HasSuffix(modulesPath, "/") {
-		modulesPath = modulesPath + "/"
-	}
 	return &DevServer{
 		Git:         gitRunner,
 		RepoRoot:    repoRoot,
-		ModulesPath: modulesPath,
+		ModulesPath: normalizeModulesPath(modulesPath),
 		baseTmpl:    template.Must(template.New("base").Parse(defaultBaseTemplate)),
 	}
 }
 
 // Handler returns an http.Handler that implements the dev registry.
+//
+// Uses Go 1.22 typed patterns (method + path). The `{path...}` wildcard at the
+// end captures the module + version portion, which we parse ourselves because
+// Go's ServeMux doesn't allow `{name...}` wildcards in the middle of a pattern
+// and module paths can contain slashes (e.g. aws/ec2/security-group).
 func (s *DevServer) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/terraform.json", s.handleServiceDiscovery)
-	mux.HandleFunc("/", s.handleModule)
-	return mux
+	mp := strings.TrimSuffix(s.ModulesPath, "/")
+
+	mux.HandleFunc("GET /.well-known/terraform.json", s.handleServiceDiscovery)
+	mux.HandleFunc("GET "+mp+"/{path...}", s.dispatchModule)
+
+	return withAccessLog(mux)
+}
+
+func withAccessLog(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logging.FromContext(r.Context()).Info("dev request",
+			"method", r.Method,
+			"path", r.URL.Path,
+		)
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (s *DevServer) handleServiceDiscovery(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[dev] %s %s", r.Method, r.URL.Path)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ServiceDiscovery{ModulesV1: s.ModulesPath})
 }
 
-func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[dev] %s %s", r.Method, r.URL.Path)
-	path := strings.TrimPrefix(r.URL.Path, s.ModulesPath)
-	path = strings.TrimPrefix(path, "/")
-
+func (s *DevServer) dispatchModule(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
 	switch {
-	case strings.HasSuffix(path, "/versions.json") || strings.HasSuffix(path, "/versions"):
-		s.handleVersions(w, r, path)
+	case strings.HasSuffix(path, "/versions.json"), strings.HasSuffix(path, "/versions"):
+		modulePath := strings.TrimSuffix(path, "/versions.json")
+		modulePath = strings.TrimSuffix(modulePath, "/versions")
+		s.handleVersions(w, r, modulePath)
 	case strings.HasSuffix(path, "/download"):
-		s.handleDownload(w, r, path)
-	case strings.HasSuffix(path, ".tar.gz"):
-		s.handleArchive(w, r, path)
+		modulePath, version, ok := splitModuleVersion(strings.TrimSuffix(path, "/download"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		s.handleDownload(w, r, modulePath, version)
+	case strings.HasSuffix(path, "/"+archiveFilename):
+		modulePath, version, ok := splitModuleVersion(strings.TrimSuffix(path, "/"+archiveFilename))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		s.handleArchive(w, r, modulePath, version)
 	default:
 		if s.HTMLEnabled {
 			s.handleHTMLPage(w, r, path)
@@ -85,24 +102,28 @@ func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path string) {
-	// Extract module path: strip trailing /versions.json or /versions
-	modulePath := strings.TrimSuffix(path, "/versions.json")
-	modulePath = strings.TrimSuffix(modulePath, "/versions")
+// splitModuleVersion splits a `{module}/{version}` path into its parts.
+// Returns ok=false if the path has no slash.
+func splitModuleVersion(p string) (modulePath, version string, ok bool) {
+	i := strings.LastIndex(p, "/")
+	if i == -1 {
+		return "", "", false
+	}
+	return p[:i], p[i+1:], true
+}
+
+func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, modulePath string) {
+	logger := logging.FromContext(r.Context())
 
 	if !s.moduleExists(modulePath) {
-		log.Printf("[dev] module %q not found in working tree", modulePath)
+		logger.Warn("module not found in working tree", "module", modulePath)
 		http.NotFound(w, r)
 		return
 	}
 
-	// Collect real versions from tags
-	tags, _ := s.Git.ListTags()
-	allParsed := module.ParseAllTags(tags)
-	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
-
+	grouped, _ := module.LoadAll(r.Context(), s.Git)
 	var entries []VersionEntry
-	for _, t := range moduleTags {
+	for _, t := range grouped[modulePath] {
 		entries = append(entries, VersionEntry{Version: t.Version.Original()})
 	}
 
@@ -120,32 +141,20 @@ func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path 
 	})
 }
 
-func (s *DevServer) handleDownload(w http.ResponseWriter, r *http.Request, path string) {
-	// path: {module}/{version}/download
-	// Strip /download, then split off the version
-	withoutDownload := strings.TrimSuffix(path, "/download")
-	lastSlash := strings.LastIndex(withoutDownload, "/")
-	if lastSlash == -1 {
-		http.NotFound(w, r)
-		return
-	}
-	modulePath := withoutDownload[:lastSlash]
-	version := withoutDownload[lastSlash+1:]
+func (s *DevServer) handleDownload(w http.ResponseWriter, r *http.Request, modulePath, version string) {
+	logger := logging.FromContext(r.Context())
 
 	if !s.moduleExists(modulePath) {
-		log.Printf("[dev] module %q not found in working tree", modulePath)
+		logger.Warn("module not found in working tree", "module", modulePath)
 		http.NotFound(w, r)
 		return
 	}
 
-	// Point to the archive endpoint on this same server
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	host := r.Host
-	archiveFile := archiveNameFromParts(modulePath, version)
-	archiveURL := fmt.Sprintf("%s://%s%s%s/%s/%s", scheme, host, s.ModulesPath, modulePath, version, archiveFile)
+	archiveURL := fmt.Sprintf("%s://%s%s%s/%s/%s", scheme, r.Host, s.ModulesPath, modulePath, version, archiveFilename)
 
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -158,36 +167,22 @@ func (s *DevServer) handleDownload(w http.ResponseWriter, r *http.Request, path 
 `, archiveURL)
 }
 
-func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, path string) {
-	// path: {module}/{version}/{archive}.tar.gz
-	// We need to extract the module path. The archive filename is the last segment.
-	lastSlash := strings.LastIndex(path, "/")
-	if lastSlash == -1 {
-		http.NotFound(w, r)
-		return
-	}
-	dirPath := path[:lastSlash]
-	// dirPath is {module}/{version}, strip the version
-	versionSlash := strings.LastIndex(dirPath, "/")
-	if versionSlash == -1 {
-		http.NotFound(w, r)
-		return
-	}
-	modulePath := dirPath[:versionSlash]
+func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, modulePath, version string) {
+	logger := logging.FromContext(r.Context())
 
 	if !s.moduleExists(modulePath) {
-		log.Printf("[dev] module %q not found in working tree", modulePath)
+		logger.Warn("module not found in working tree", "module", modulePath)
 		http.NotFound(w, r)
 		return
 	}
 
-	log.Printf("[dev] building archive for %s from working tree", modulePath)
+	logger.Info("building archive from working tree", "module", modulePath)
 
-	descriptiveName := descriptiveArchiveNameFromParts(modulePath, dirPath[versionSlash+1:])
+	descriptiveName := descriptiveArchiveName(modulePath, version)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, descriptiveName))
 	w.Header().Set("Content-Type", "application/gzip")
 	if err := buildArchiveFromWorkTree(s.RepoRoot, modulePath, w); err != nil {
-		log.Printf("[dev] error building archive: %v", err)
+		logger.Error("building archive failed", "module", modulePath, "err", err)
 		http.Error(w, "failed to build archive", http.StatusInternalServerError)
 		return
 	}
@@ -195,24 +190,20 @@ func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, path s
 
 func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path string) {
 	path = strings.TrimSuffix(path, "/")
-
 	reader := FilesystemReadmeReader(s.RepoRoot)
 
-	// Root page: list all modules
 	if path == "" {
 		modules, err := module.DiscoverModules(s.RepoRoot)
 		if err != nil {
 			http.Error(w, "failed to discover modules", http.StatusInternalServerError)
 			return
 		}
-		var entries []rootModuleEntry
+		grouped, _ := module.LoadAll(r.Context(), s.Git)
+		entries := make([]rootModuleEntry, 0, len(modules))
 		for _, m := range modules {
-			tags, _ := s.Git.ListTags()
-			allParsed := module.ParseAllTags(tags)
-			moduleTags := module.FilterTagsForModule(allParsed, m.Path)
-			latest := module.LatestVersion(moduleTags)
+			moduleTags := grouped[m.Path]
 			latestStr := "0.0.0-dev"
-			if latest != nil {
+			if latest := module.LatestVersion(moduleTags); latest != nil {
 				latestStr = latest.Version.Original()
 			}
 			entries = append(entries, rootModuleEntry{
@@ -225,48 +216,40 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 		return
 	}
 
-	// Check if this is a version page (last segment is a semver or "0.0.0-dev")
-	lastSlash := strings.LastIndex(path, "/")
-	if lastSlash != -1 {
+	// Version page: last segment is a valid semver and the module directory exists.
+	if lastSlash := strings.LastIndex(path, "/"); lastSlash != -1 {
 		possibleModule := path[:lastSlash]
 		possibleVersion := path[lastSlash+1:]
-		if _, err := semver.StrictNewVersion(possibleVersion); err == nil {
-			if s.moduleExists(possibleModule) {
-				readmeHTML := renderMarkdown(reader(possibleModule, ""))
-				archiveFile := "module.tar.gz"
-				data := versionPageData{
-					ModulePath:          possibleModule,
-					Version:             possibleVersion,
-					ArchiveURL:          archiveFile,
-					ArchiveDownloadName: descriptiveArchiveNameFromParts(possibleModule, possibleVersion),
-					ReadmeHTML:          readmeHTML,
-				}
-				s.renderPage(w, possibleModule+" "+possibleVersion, versionTmpl, data)
-				return
-			}
+		if _, err := semver.StrictNewVersion(possibleVersion); err == nil && s.moduleExists(possibleModule) {
+			readmeHTML := renderMarkdown(reader(r.Context(), possibleModule, ""))
+			s.renderPage(w, possibleModule+" "+possibleVersion, versionTmpl, versionPageData{
+				ModulePath:          possibleModule,
+				Version:             possibleVersion,
+				ArchiveURL:          archiveFilename,
+				ArchiveDownloadName: descriptiveArchiveName(possibleModule, possibleVersion),
+				ReadmeHTML:          readmeHTML,
+			})
+			return
 		}
 	}
 
-	// Module page
 	if s.moduleExists(path) {
-		tags, _ := s.Git.ListTags()
-		allParsed := module.ParseAllTags(tags)
-		moduleTags := module.FilterTagsForModule(allParsed, path)
+		grouped, _ := module.LoadAll(r.Context(), s.Git)
+		moduleTags := grouped[path]
 		module.SortVersionsDesc(moduleTags)
 
-		var versions []string
+		versions := make([]string, 0, len(moduleTags)+1)
 		for _, t := range moduleTags {
 			versions = append(versions, t.Version.Original())
 		}
 		versions = append(versions, "0.0.0-dev")
 
-		readmeHTML := renderMarkdown(reader(path, ""))
-		data := modulePageData{
+		readmeHTML := renderMarkdown(reader(r.Context(), path, ""))
+		s.renderPage(w, path, moduleTmpl, modulePageData{
 			ModulePath: path,
 			Versions:   versions,
 			ReadmeHTML: readmeHTML,
-		}
-		s.renderPage(w, path, moduleTmpl, data)
+		})
 		return
 	}
 
@@ -303,18 +286,6 @@ func (s *DevServer) moduleExists(modulePath string) bool {
 		}
 	}
 	return false
-}
-
-// archiveNameFromParts builds an archive filename without requiring a semver object.
-func archiveNameFromParts(modulePath, version string) string {
-	return "module.tar.gz"
-}
-
-// descriptiveArchiveNameFromParts returns a human-friendly archive filename
-// for use in Content-Disposition headers.
-func descriptiveArchiveNameFromParts(modulePath, version string) string {
-	safePath := strings.ReplaceAll(modulePath, "/", "-")
-	return fmt.Sprintf("%s-%s.tar.gz", safePath, version)
 }
 
 // buildArchiveFromWorkTree creates a tar.gz of the module directory from the

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -12,10 +13,14 @@ import (
 
 var cfg config.Config
 
-// Version is set at build time via ldflags:
+// Build metadata set at release time via ldflags:
 //
 //	go build -ldflags "-X github.com/Heldroe/tfr-static/cmd.Version=1.0.0"
-var Version = "dev"
+var (
+	Version = "dev"
+	Commit  = ""
+	Date    = ""
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "tfr-static",
@@ -25,13 +30,20 @@ var rootCmd = &cobra.Command{
 Generates static files for hosting a Terraform module registry
 on object storage (e.g. S3). It uses git tags as the source of truth for
 module versions and generates registry-protocol-compliant files.`, Version),
-	Version:           Version,
+	Version:           versionString(),
 	PersistentPreRunE: loadConfig,
 	SilenceUsage:      true,
 }
 
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+func versionString() string {
+	if Commit == "" && Date == "" {
+		return Version
+	}
+	return fmt.Sprintf("%s (commit %s, built %s)", Version, Commit, Date)
+}
+
+func Execute(ctx context.Context) {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
@@ -56,7 +68,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	)
 
 	// Resolve the git repo root to find the config file
-	repoRoot, err := git.NewRunner(cfg.RepoPath).TopLevel()
+	repoRoot, err := git.NewRunner(cfg.RepoPath).TopLevel(cmd.Context())
 	if err != nil {
 		// Not inside a git repo — skip config file loading
 		repoRoot = cfg.RepoPath
@@ -67,119 +79,47 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-
-	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex *string
-	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL, fileHTMLBase *string
-	var fileHTML, fileGzip, fileTerraformDocs *bool
-	var fileInvalidationFullURL, fileInvalidationURLEncode, fileInvalidationDirs *bool
-	if fileCfg != nil {
-		fileBaseURL = fileCfg.BaseURL
-		fileMainBranch = fileCfg.MainBranch
-		fileOutputDir = fileCfg.OutputDir
-		fileModulesPath = fileCfg.ModulesPath
-		fileHTMLIndex = fileCfg.HTMLIndex
-		fileHTML = fileCfg.HTML
-		fileGzip = fileCfg.Gzip
-		fileTerraformDocs = fileCfg.TerraformDocs
-		fileInvalidationFile = fileCfg.InvalidationFile
-		fileInvalidationFormat = fileCfg.InvalidationFormat
-		fileInvalidationFullURL = fileCfg.InvalidationFullURL
-		fileInvalidationBaseURL = fileCfg.InvalidationBaseURL
-		fileInvalidationURLEncode = fileCfg.InvalidationURLEncode
-		fileInvalidationDirs = fileCfg.InvalidationDirs
-		fileHTMLBase = fileCfg.HTMLBase
+	if fileCfg == nil {
+		fileCfg = &config.FileConfig{}
 	}
 
-	cfg.BaseURL = resolveValue(
-		flagIfChanged(cmd, "base-url"),
-		os.Getenv("TFR_BASE_URL"),
-		fileBaseURL,
-		"",
-	)
-	cfg.MainBranch = resolveValue(
-		flagIfChanged(cmd, "main-branch"),
-		os.Getenv("TFR_MAIN_BRANCH"),
-		fileMainBranch,
-		"main",
-	)
-	cfg.OutputDir = resolveValue(
-		flagIfChanged(cmd, "output-dir"),
-		os.Getenv("TFR_OUTPUT_DIR"),
-		fileOutputDir,
-		"target",
-	)
-	cfg.ModulesPath = resolveValue(
-		flagIfChanged(cmd, "modules-path"),
-		os.Getenv("TFR_MODULES_PATH"),
-		fileModulesPath,
-		"/",
-	)
-	cfg.HTML = resolveBoolValue(
-		boolFlagIfChanged(cmd, "html"),
-		os.Getenv("TFR_HTML"),
-		fileHTML,
-		false,
-	)
-	cfg.HTMLIndex = resolveValue(
-		flagIfChanged(cmd, "html-index"),
-		os.Getenv("TFR_HTML_INDEX"),
-		fileHTMLIndex,
-		"index.html",
-	)
-	cfg.Gzip = resolveBoolValue(
-		boolFlagIfChanged(cmd, "gzip"),
-		os.Getenv("TFR_GZIP"),
-		fileGzip,
-		false,
-	)
-	cfg.TerraformDocs = resolveBoolValue(
-		boolFlagIfChanged(cmd, "terraform-docs"),
-		os.Getenv("TFR_TERRAFORM_DOCS"),
-		fileTerraformDocs,
-		false,
-	)
-	cfg.InvalidationFile = resolveValue(
-		flagIfChanged(cmd, "invalidation-file"),
-		os.Getenv("TFR_INVALIDATION_FILE"),
-		fileInvalidationFile,
-		"",
-	)
-	cfg.InvalidationFormat = resolveValue(
-		flagIfChanged(cmd, "invalidation-format"),
-		os.Getenv("TFR_INVALIDATION_FORMAT"),
-		fileInvalidationFormat,
-		"txt",
-	)
-	cfg.InvalidationFullURL = resolveBoolValue(
-		boolFlagIfChanged(cmd, "invalidation-full-url"),
-		os.Getenv("TFR_INVALIDATION_FULL_URL"),
-		fileInvalidationFullURL,
-		false,
-	)
-	cfg.InvalidationBaseURL = resolveValue(
-		flagIfChanged(cmd, "invalidation-base-url"),
-		os.Getenv("TFR_INVALIDATION_BASE_URL"),
-		fileInvalidationBaseURL,
-		"",
-	)
-	cfg.InvalidationURLEncode = resolveBoolValue(
-		boolFlagIfChanged(cmd, "invalidation-url-encode"),
-		os.Getenv("TFR_INVALIDATION_URL_ENCODE"),
-		fileInvalidationURLEncode,
-		false,
-	)
-	cfg.InvalidationDirs = resolveBoolValue(
-		boolFlagIfChanged(cmd, "invalidation-dirs"),
-		os.Getenv("TFR_INVALIDATION_DIRS"),
-		fileInvalidationDirs,
-		false,
-	)
-	cfg.HTMLBase = resolveValue(
-		flagIfChanged(cmd, "html-base"),
-		os.Getenv("TFR_HTML_BASE"),
-		fileHTMLBase,
-		"",
-	)
+	strFields := []struct {
+		target     *string
+		flag, env  string
+		file       *string
+		defaultVal string
+	}{
+		{&cfg.BaseURL, "base-url", "TFR_BASE_URL", fileCfg.BaseURL, ""},
+		{&cfg.MainBranch, "main-branch", "TFR_MAIN_BRANCH", fileCfg.MainBranch, "main"},
+		{&cfg.OutputDir, "output-dir", "TFR_OUTPUT_DIR", fileCfg.OutputDir, "target"},
+		{&cfg.ModulesPath, "modules-path", "TFR_MODULES_PATH", fileCfg.ModulesPath, "/"},
+		{&cfg.HTMLIndex, "html-index", "TFR_HTML_INDEX", fileCfg.HTMLIndex, "index.html"},
+		{&cfg.HTMLBase, "html-base", "TFR_HTML_BASE", fileCfg.HTMLBase, ""},
+		{&cfg.InvalidationFile, "invalidation-file", "TFR_INVALIDATION_FILE", fileCfg.InvalidationFile, ""},
+		{&cfg.InvalidationFormat, "invalidation-format", "TFR_INVALIDATION_FORMAT", fileCfg.InvalidationFormat, "txt"},
+		{&cfg.InvalidationBaseURL, "invalidation-base-url", "TFR_INVALIDATION_BASE_URL", fileCfg.InvalidationBaseURL, ""},
+	}
+	for _, f := range strFields {
+		*f.target = resolveValue(flagIfChanged(cmd, f.flag), os.Getenv(f.env), f.file, f.defaultVal)
+	}
+
+	boolFields := []struct {
+		target     *bool
+		flag, env  string
+		file       *bool
+		defaultVal bool
+	}{
+		{&cfg.HTML, "html", "TFR_HTML", fileCfg.HTML, false},
+		{&cfg.Gzip, "gzip", "TFR_GZIP", fileCfg.Gzip, false},
+		{&cfg.TerraformDocs, "terraform-docs", "TFR_TERRAFORM_DOCS", fileCfg.TerraformDocs, false},
+		{&cfg.InvalidationFullURL, "invalidation-full-url", "TFR_INVALIDATION_FULL_URL", fileCfg.InvalidationFullURL, false},
+		{&cfg.InvalidationURLEncode, "invalidation-url-encode", "TFR_INVALIDATION_URL_ENCODE", fileCfg.InvalidationURLEncode, false},
+		{&cfg.InvalidationDirs, "invalidation-dirs", "TFR_INVALIDATION_DIRS", fileCfg.InvalidationDirs, false},
+	}
+	for _, f := range boolFields {
+		*f.target = resolveBoolValue(boolFlagIfChanged(cmd, f.flag), os.Getenv(f.env), f.file, f.defaultVal)
+	}
+
 	return nil
 }
 

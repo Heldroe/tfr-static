@@ -1,11 +1,13 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -43,24 +45,33 @@ type Publisher struct {
 
 // NewPublisher creates a new Publisher.
 func NewPublisher(gitRunner *git.Runner, outputDir, baseURL, modulesPath string) *Publisher {
-	// Ensure modules path has leading and trailing slashes
-	if modulesPath == "" {
-		modulesPath = "/"
-	}
-	if !strings.HasPrefix(modulesPath, "/") {
-		modulesPath = "/" + modulesPath
-	}
-	if !strings.HasSuffix(modulesPath, "/") {
-		modulesPath = modulesPath + "/"
-	}
-
 	return &Publisher{
 		Git:         gitRunner,
 		OutputDir:   outputDir,
 		BaseURL:     strings.TrimRight(baseURL, "/"),
-		ModulesPath: modulesPath,
+		ModulesPath: normalizeModulesPath(modulesPath),
 	}
 }
+
+// normalizeModulesPath ensures the modules path has leading and trailing slashes,
+// e.g. "" → "/", "modules" → "/modules/", "/modules" → "/modules/".
+func normalizeModulesPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	return p
+}
+
+// archiveFilename is the canonical filename for module archives. It is identical
+// for every version so that clients can predict the URL without knowing the
+// version string upfront.
+const archiveFilename = "module.tar.gz"
 
 // GenerateServiceDiscovery creates the .well-known/terraform.json file.
 func (p *Publisher) GenerateServiceDiscovery() error {
@@ -86,37 +97,31 @@ func (p *Publisher) GenerateServiceDiscovery() error {
 	return nil
 }
 
-// archiveName returns the archive filename for a module version.
-func archiveName(modulePath string, version *semver.Version) string {
-	return "module.tar.gz"
-}
-
 // descriptiveArchiveName returns a human-friendly archive filename (e.g. "hetzner-server-1.0.0.tar.gz")
 // for use in download attributes and Content-Disposition headers.
-func descriptiveArchiveName(modulePath string, version *semver.Version) string {
+func descriptiveArchiveName(modulePath, version string) string {
 	safePath := strings.ReplaceAll(modulePath, "/", "-")
-	return fmt.Sprintf("%s-%s.tar.gz", safePath, version.Original())
+	return fmt.Sprintf("%s-%s.tar.gz", safePath, version)
 }
 
 // PublishVersion generates all files for a single module version.
 // It creates: the archive, the download HTML, and returns the version string.
 // The caller is responsible for generating the versions.json after all versions are published.
-func (p *Publisher) PublishVersion(tag module.TagInfo) error {
+func (p *Publisher) PublishVersion(ctx context.Context, tag module.TagInfo) error {
 	versionDir := filepath.Join(p.OutputDir, tag.ModulePath, tag.Version.Original())
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return fmt.Errorf("creating version directory: %w", err)
 	}
 
 	// Generate archive
-	archiveFile := archiveName(tag.ModulePath, tag.Version)
-	archivePath := filepath.Join(versionDir, archiveFile)
-	if err := p.Git.ArchiveModule(tag.Tag, tag.ModulePath, archivePath); err != nil {
+	archivePath := filepath.Join(versionDir, archiveFilename)
+	if err := p.Git.ArchiveModule(ctx, tag.Tag, tag.ModulePath, archivePath); err != nil {
 		return fmt.Errorf("archiving module %s at %s: %w", tag.ModulePath, tag.Tag, err)
 	}
 
 	// Generate download HTML
 	archiveURL := fmt.Sprintf("%s/%s/%s/%s",
-		p.BaseURL, tag.ModulePath, tag.Version.Original(), archiveFile)
+		p.BaseURL, tag.ModulePath, tag.Version.Original(), archiveFilename)
 	downloadHTML := generateDownloadHTML(archiveURL)
 	downloadPath := filepath.Join(versionDir, "download")
 	if err := os.WriteFile(downloadPath, []byte(downloadHTML), 0o644); err != nil {
@@ -135,8 +140,7 @@ func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, vers
 	}
 
 	// Generate archive from working tree
-	archiveFile := archiveName(modulePath, version)
-	archivePath := filepath.Join(versionDir, archiveFile)
+	archivePath := filepath.Join(versionDir, archiveFilename)
 	f, err := os.Create(archivePath)
 	if err != nil {
 		return fmt.Errorf("creating archive file: %w", err)
@@ -149,7 +153,7 @@ func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, vers
 
 	// Generate download HTML
 	archiveURL := fmt.Sprintf("%s/%s/%s/%s",
-		p.BaseURL, modulePath, version.Original(), archiveFile)
+		p.BaseURL, modulePath, version.Original(), archiveFilename)
 	downloadHTML := generateDownloadHTML(archiveURL)
 	downloadPath := filepath.Join(versionDir, "download")
 	if err := os.WriteFile(downloadPath, []byte(downloadHTML), 0o644); err != nil {
@@ -258,11 +262,7 @@ func generateDownloadHTML(archiveURL string) string {
 }
 
 func sortVersionsDesc(versions []*semver.Version) {
-	for i := 0; i < len(versions); i++ {
-		for j := i + 1; j < len(versions); j++ {
-			if versions[j].GreaterThan(versions[i]) {
-				versions[i], versions[j] = versions[j], versions[i]
-			}
-		}
-	}
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].GreaterThan(versions[j])
+	})
 }

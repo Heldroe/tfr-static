@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -37,17 +38,18 @@ func init() {
 }
 
 func runTag(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	gitRunner := git.NewRunner(cfg.RepoPath)
 
 	// Resolve the actual repository root for module discovery.
 	// Git finds .git by walking up, but filepath.Walk needs the real root.
-	repoRoot, err := gitRunner.TopLevel()
+	repoRoot, err := gitRunner.TopLevel(ctx)
 	if err != nil {
 		return fmt.Errorf("resolving repository root: %w", err)
 	}
 
 	// Verify we're on the expected branch
-	branch, err := gitRunner.CurrentBranch()
+	branch, err := gitRunner.CurrentBranch(ctx)
 	if err != nil {
 		return fmt.Errorf("getting current branch: %w", err)
 	}
@@ -57,11 +59,11 @@ func runTag(cmd *cobra.Command, args []string) error {
 
 	// Fetch and check if up to date
 	fmt.Println("Fetching from remote...")
-	if err := gitRunner.Fetch(); err != nil {
+	if err := gitRunner.Fetch(ctx); err != nil {
 		return fmt.Errorf("fetching: %w", err)
 	}
 
-	upToDate, err := gitRunner.IsUpToDate(cfg.MainBranch)
+	upToDate, err := gitRunner.IsUpToDate(ctx, cfg.MainBranch)
 	if err != nil {
 		return fmt.Errorf("checking if up to date: %w", err)
 	}
@@ -75,15 +77,13 @@ func runTag(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("discovering modules: %w", err)
 	}
 
-	tags, err := gitRunner.ListTags()
+	grouped, err := module.LoadAll(ctx, gitRunner)
 	if err != nil {
 		return fmt.Errorf("listing tags: %w", err)
 	}
-	allParsed := module.ParseAllTags(tags)
-	grouped := module.GroupTagsByModule(allParsed)
 
 	if pendingOnly && len(args) == 0 {
-		modules, err = filterPendingModules(gitRunner, modules, grouped)
+		modules, err = filterPendingModules(ctx, gitRunner, modules, grouped)
 		if err != nil {
 			return err
 		}
@@ -111,14 +111,14 @@ func runTag(cmd *cobra.Command, args []string) error {
 	}
 
 	if pendingOnly && len(args) > 0 {
-		if pending, err := modulePending(gitRunner, modulePath, grouped); err != nil {
+		if pending, err := modulePending(ctx, gitRunner, modulePath, grouped); err != nil {
 			return err
 		} else if !pending {
 			return fmt.Errorf("module %q has no pending changes", modulePath)
 		}
 	}
 
-	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
+	moduleTags := grouped[modulePath]
 
 	var currentVersion *semver.Version
 	if latest := module.LatestVersion(moduleTags); latest != nil {
@@ -174,7 +174,7 @@ func runTag(cmd *cobra.Command, args []string) error {
 	newTag := module.FormatTag(modulePath, newVersion)
 
 	// Check tag doesn't already exist
-	exists, err := gitRunner.TagExists(newTag)
+	exists, err := gitRunner.TagExists(ctx, newTag)
 	if err != nil {
 		return fmt.Errorf("checking tag existence: %w", err)
 	}
@@ -184,7 +184,7 @@ func runTag(cmd *cobra.Command, args []string) error {
 
 	// Create the tag
 	message := fmt.Sprintf("Release %s version %s", modulePath, newVersion)
-	if err := gitRunner.CreateTag(newTag, message); err != nil {
+	if err := gitRunner.CreateTag(ctx, newTag, message); err != nil {
 		return fmt.Errorf("creating tag: %w", err)
 	}
 	fmt.Printf("\nCreated tag: %s\n", newTag)
@@ -205,7 +205,7 @@ func runTag(cmd *cobra.Command, args []string) error {
 
 	if shouldPush {
 		fmt.Printf("Pushing tag %s...\n", newTag)
-		if err := gitRunner.PushTag(newTag); err != nil {
+		if err := gitRunner.PushTag(ctx, newTag); err != nil {
 			return fmt.Errorf("pushing tag: %w", err)
 		}
 		fmt.Println("Tag pushed successfully.")
@@ -251,22 +251,22 @@ func selectModule(modules []module.Module, grouped map[string][]module.TagInfo) 
 	return selected, nil
 }
 
-func modulePending(gitRunner *git.Runner, modulePath string, grouped map[string][]module.TagInfo) (bool, error) {
+func modulePending(ctx context.Context, gitRunner *git.Runner, modulePath string, grouped map[string][]module.TagInfo) (bool, error) {
 	latest := module.LatestVersion(grouped[modulePath])
 	if latest == nil {
 		return true, nil
 	}
-	changed, err := gitRunner.ModuleHasChanges(latest.Tag, modulePath)
+	changed, err := gitRunner.ModuleHasChanges(ctx, latest.Tag, modulePath)
 	if err != nil {
 		return false, fmt.Errorf("checking changes for %s: %w", modulePath, err)
 	}
 	return changed, nil
 }
 
-func filterPendingModules(gitRunner *git.Runner, modules []module.Module, grouped map[string][]module.TagInfo) ([]module.Module, error) {
+func filterPendingModules(ctx context.Context, gitRunner *git.Runner, modules []module.Module, grouped map[string][]module.TagInfo) ([]module.Module, error) {
 	var pending []module.Module
 	for _, m := range modules {
-		ok, err := modulePending(gitRunner, m.Path, grouped)
+		ok, err := modulePending(ctx, gitRunner, m.Path, grouped)
 		if err != nil {
 			return nil, err
 		}

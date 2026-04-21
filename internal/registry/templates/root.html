@@ -1,0 +1,15 @@
+<h1>Terraform Module Registry</h1>
+<table>
+<thead>
+<tr><th>Module</th><th>Latest Version</th><th>Versions</th></tr>
+</thead>
+<tbody>
+{{range .Modules}}
+<tr>
+<td><a href="{{.Path}}/">{{.Path}}</a></td>
+<td>{{if .LatestVersion}}{{.LatestVersion}}{{else}}-{{end}}</td>
+<td>{{.VersionCount}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
