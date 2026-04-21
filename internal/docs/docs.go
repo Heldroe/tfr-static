@@ -20,7 +20,8 @@ const (
 
 var (
 	configCacheMu sync.Mutex
-	configCache   = map[string]*print.Config{}
+	configByDir   = map[string]*print.Config{}
+	configByFile  = map[string]*print.Config{}
 )
 
 // Generate produces terraform-docs markdown table output for a module directory.
@@ -88,14 +89,19 @@ func loadConfig(configDir string) (*print.Config, error) {
 	configCacheMu.Lock()
 	defer configCacheMu.Unlock()
 
-	if cached, ok := configCache[configDir]; ok {
+	if cached, ok := configByDir[configDir]; ok {
+		return cached, nil
+	}
+
+	cfgFile := findConfig(configDir)
+	if cached, ok := configByFile[cfgFile]; ok {
+		configByDir[configDir] = cached
 		return cached, nil
 	}
 
 	config := print.DefaultConfig()
 	config.Formatter = "markdown table"
 
-	cfgFile := findConfig(configDir)
 	if cfgFile == "" {
 		fmt.Fprintf(os.Stderr, "terraform-docs: no config file found, using defaults\n")
 	} else {
@@ -111,7 +117,8 @@ func loadConfig(configDir string) (*print.Config, error) {
 	}
 	config.Parse()
 
-	configCache[configDir] = config
+	configByDir[configDir] = config
+	configByFile[cfgFile] = config
 	return config, nil
 }
 
