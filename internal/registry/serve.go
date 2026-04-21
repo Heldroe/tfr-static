@@ -70,7 +70,7 @@ func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
 	path = strings.TrimPrefix(path, "/")
 
 	switch {
-	case strings.HasSuffix(path, "/versions.json") || strings.HasSuffix(path, "/versions"):
+	case strings.HasSuffix(path, "/versions"):
 		s.handleVersions(w, r, path)
 	case strings.HasSuffix(path, "/download"):
 		s.handleDownload(w, r, path)
@@ -86,9 +86,7 @@ func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path string) {
-	// Extract module path: strip trailing /versions.json or /versions
-	modulePath := strings.TrimSuffix(path, "/versions.json")
-	modulePath = strings.TrimSuffix(modulePath, "/versions")
+	modulePath := strings.TrimSuffix(path, "/versions")
 
 	if !s.moduleExists(modulePath) {
 		log.Printf("[dev] module %q not found in working tree", modulePath)

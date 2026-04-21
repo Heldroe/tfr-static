@@ -24,7 +24,7 @@ var (
 var publishCmd = &cobra.Command{
 	Use:   "publish",
 	Short: "Publish module versions to the static registry",
-	Long: `Generate static registry files (archive, download HTML, versions.json)
+	Long: `Generate static registry files (archive, download HTML, versions)
 for one or more module versions. By default publishes a single tag.
 
 Examples:
@@ -394,14 +394,14 @@ func runPublishDev(cmd *cobra.Command) error {
 			return fmt.Errorf("publishing %s: %w", m.Path, err)
 		}
 
-		// Generate versions.json with real tagged versions + dev
+		// Generate versions with real tagged versions + dev
 		versions, err := collectModuleVersions(gitRunner, m.Path)
 		if err != nil {
 			versions = nil // no tags yet is fine
 		}
 		versions = append(versions, devVersion)
 		if err := publisher.GenerateVersionsJSON(m.Path, versions); err != nil {
-			return fmt.Errorf("generating versions.json for %s: %w", m.Path, err)
+			return fmt.Errorf("generating versions for %s: %w", m.Path, err)
 		}
 	}
 

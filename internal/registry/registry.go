@@ -13,7 +13,7 @@ import (
 	"github.com/Heldroe/tfr-static/internal/module"
 )
 
-// VersionEntry represents a single version in the versions.json file.
+// VersionEntry represents a single version in the versions file.
 type VersionEntry struct {
 	Version string `json:"version"`
 }
@@ -100,7 +100,7 @@ func descriptiveArchiveName(modulePath string, version *semver.Version) string {
 
 // PublishVersion generates all files for a single module version.
 // It creates: the archive, the download HTML, and returns the version string.
-// The caller is responsible for generating the versions.json after all versions are published.
+// The caller is responsible for generating the versions after all versions are published.
 func (p *Publisher) PublishVersion(tag module.TagInfo) error {
 	versionDir := filepath.Join(p.OutputDir, tag.ModulePath, tag.Version.Original())
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
@@ -159,7 +159,7 @@ func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, vers
 	return nil
 }
 
-// GenerateVersionsJSON creates the versions.json file for a module.
+// GenerateVersionsJSON creates the versions file for a module.
 func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.Version) error {
 	moduleDir := filepath.Join(p.OutputDir, modulePath)
 	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
@@ -184,12 +184,12 @@ func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.V
 
 	data, err := json.MarshalIndent(mv, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshaling versions.json: %w", err)
+		return fmt.Errorf("marshaling versions: %w", err)
 	}
 
-	path := filepath.Join(moduleDir, "versions.json")
+	path := filepath.Join(moduleDir, "versions")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("writing versions.json: %w", err)
+		return fmt.Errorf("writing versions: %w", err)
 	}
 
 	return nil
@@ -200,7 +200,7 @@ func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.V
 // because they are brand-new URLs that have never been cached.
 func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
 	paths := []string{
-		fmt.Sprintf("/%s/versions.json", modulePath),
+		fmt.Sprintf("/%s/versions", modulePath),
 	}
 	if htmlEnabled {
 		paths = append(paths, "/"+indexFile)
@@ -221,7 +221,7 @@ func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFi
 // are included since they are all regenerated.
 func InvalidationPathsForModuleRebuild(modulePath string, versions []*semver.Version, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
 	paths := []string{
-		fmt.Sprintf("/%s/versions.json", modulePath),
+		fmt.Sprintf("/%s/versions", modulePath),
 	}
 	for _, v := range versions {
 		paths = append(paths, fmt.Sprintf("/%s/%s/download", modulePath, v.Original()))

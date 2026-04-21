@@ -167,14 +167,14 @@ func TestGenerateVersionsJSON(t *testing.T) {
 		t.Fatalf("GenerateVersionsJSON() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(outputDir, "hetzner/server/versions.json"))
+	data, err := os.ReadFile(filepath.Join(outputDir, "hetzner/server/versions"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var mv ModuleVersions
 	if err := json.Unmarshal(data, &mv); err != nil {
-		t.Fatalf("unmarshaling versions.json: %v", err)
+		t.Fatalf("unmarshaling versions: %v", err)
 	}
 
 	if len(mv.Modules) != 1 {
@@ -201,14 +201,14 @@ func TestInvalidationPathsForNewVersion(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %d: %v", len(paths), paths)
 	}
-	if paths[0] != "/hetzner/server/versions.json" {
+	if paths[0] != "/hetzner/server/versions" {
 		t.Errorf("paths[0] = %q", paths[0])
 	}
 
 	// With HTML, no dirs
 	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html", false)
 	expected := []string{
-		"/hetzner/server/versions.json",
+		"/hetzner/server/versions",
 		"/index.html",
 		"/hetzner/server/index.html",
 	}
@@ -224,7 +224,7 @@ func TestInvalidationPathsForNewVersion(t *testing.T) {
 	// With HTML and dirs
 	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html", true)
 	expected = []string{
-		"/hetzner/server/versions.json",
+		"/hetzner/server/versions",
 		"/index.html",
 		"/",
 		"/hetzner/server/index.html",
@@ -249,7 +249,7 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 	// Without HTML
 	paths := InvalidationPathsForModuleRebuild("hetzner/server", versions, false, "index.html", false)
 	expected := []string{
-		"/hetzner/server/versions.json",
+		"/hetzner/server/versions",
 		"/hetzner/server/1.0.0/download",
 		"/hetzner/server/0.1.0/download",
 	}
@@ -265,7 +265,7 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 	// With HTML, no dirs
 	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html", false)
 	expected = []string{
-		"/hetzner/server/versions.json",
+		"/hetzner/server/versions",
 		"/hetzner/server/1.0.0/download",
 		"/hetzner/server/1.0.0/index.html",
 		"/hetzner/server/0.1.0/download",
@@ -285,7 +285,7 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 	// With HTML and dirs
 	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html", true)
 	expected = []string{
-		"/hetzner/server/versions.json",
+		"/hetzner/server/versions",
 		"/hetzner/server/1.0.0/download",
 		"/hetzner/server/1.0.0/index.html",
 		"/hetzner/server/1.0.0/",
@@ -416,15 +416,15 @@ func TestEndToEndPublishAndVersions(t *testing.T) {
 		}
 	}
 
-	// Verify versions.json
-	data, err := os.ReadFile(filepath.Join(outputDir, "hetzner/server/versions.json"))
+	// Verify versions
+	data, err := os.ReadFile(filepath.Join(outputDir, "hetzner/server/versions"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var mv ModuleVersions
 	json.Unmarshal(data, &mv)
 	if len(mv.Modules[0].Versions) != 3 {
-		t.Errorf("expected 3 versions in versions.json, got %d", len(mv.Modules[0].Versions))
+		t.Errorf("expected 3 versions in versions, got %d", len(mv.Modules[0].Versions))
 	}
 }
 

@@ -104,7 +104,7 @@ func TestDevServer_Versions(t *testing.T) {
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/versions.json")
+	resp, err := http.Get(srv.URL + "/hetzner/server/versions")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestDevServer_Versions_NoTags(t *testing.T) {
 	defer srv.Close()
 
 	// aws/ec2/security-group has no tags
-	resp, _ := http.Get(srv.URL + "/aws/ec2/security-group/versions.json")
+	resp, _ := http.Get(srv.URL + "/aws/ec2/security-group/versions")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -167,7 +167,7 @@ func TestDevServer_Versions_NonExistentModule(t *testing.T) {
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "/nonexistent/module/versions.json")
+	resp, _ := http.Get(srv.URL + "/nonexistent/module/versions")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 404 {
@@ -337,7 +337,7 @@ func TestDevServer_FullFlow(t *testing.T) {
 	resp.Body.Close()
 
 	// 2. List versions
-	resp, _ = http.Get(srv.URL + sd.ModulesV1 + "hetzner/server/versions.json")
+	resp, _ = http.Get(srv.URL + sd.ModulesV1 + "hetzner/server/versions")
 	var mv ModuleVersions
 	json.NewDecoder(resp.Body).Decode(&mv)
 	resp.Body.Close()

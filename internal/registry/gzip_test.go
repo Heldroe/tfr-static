@@ -14,7 +14,7 @@ func TestGzipTextFiles(t *testing.T) {
 
 	// Create text files
 	os.MkdirAll(filepath.Join(dir, "mod", "1.0.0"), 0o755)
-	os.WriteFile(filepath.Join(dir, "mod", "versions.json"), []byte(`{"modules":[]}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "mod", "versions"), []byte(`{"modules":[]}`), 0o644)
 	os.WriteFile(filepath.Join(dir, "mod", "1.0.0", "download"), []byte(`<html>test</html>`), 0o644)
 	os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<html>root</html>`), 0o644)
 
@@ -32,7 +32,7 @@ func TestGzipTextFiles(t *testing.T) {
 
 	// Verify text files are valid gzip
 	for _, path := range []string{
-		filepath.Join(dir, "mod", "versions.json"),
+		filepath.Join(dir, "mod", "versions"),
 		filepath.Join(dir, "mod", "1.0.0", "download"),
 		filepath.Join(dir, "index.html"),
 	} {
@@ -42,10 +42,10 @@ func TestGzipTextFiles(t *testing.T) {
 		}
 	}
 
-	// Verify versions.json decompresses to original content
-	got := readGzipped(t, filepath.Join(dir, "mod", "versions.json"))
+	// Verify versions decompresses to original content
+	got := readGzipped(t, filepath.Join(dir, "mod", "versions"))
 	if got != `{"modules":[]}` {
-		t.Errorf("versions.json content = %q", got)
+		t.Errorf("versions content = %q", got)
 	}
 
 	// Verify .tar.gz was NOT modified (still readable as plain text)

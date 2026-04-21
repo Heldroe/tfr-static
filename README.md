@@ -22,7 +22,7 @@ For each published version, the following files are generated:
 |---|---|
 | `{module}/{version}/module.tar.gz` | The module archive |
 | `{module}/{version}/download` | HTML page with `<meta name="terraform-get">` pointing to the archive |
-| `{module}/versions.json` | Version listing following the registry protocol |
+| `{module}/versions` | Version listing following the registry protocol |
 | `.well-known/terraform.json` | [Service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery) document |
 
 ## Usage with Terraform
@@ -161,8 +161,8 @@ tfr-static publish --all --gzip
 
 | Flag | Behavior |
 |---|---|
-| `--tag` | Publish a single version. Generates the archive, download page, and an updated `versions.json`. |
-| `--module` | Rebuild all versions of a module by iterating through its git tags. `versions.json` is generated once at the end. |
+| `--tag` | Publish a single version. Generates the archive, download page, and an updated `versions`. |
+| `--module` | Rebuild all versions of a module by iterating through its git tags. `versions` is generated once at the end. |
 | `--all` | Rebuild all versions of all modules. |
 | `--dev` | Publish modules from the current working tree as version `0.0.0-dev`. Compatible with `--module` to filter. Mutually exclusive with `--tag` and `--all`. |
 | `--dry-run` | Show what would be generated and which paths would need CDN invalidation. |
@@ -189,14 +189,14 @@ The `--invalidation-file` flag writes all CDN paths that need cache invalidation
 
 **`txt`** (default) — one path per line:
 ```
-/hetzner/server/versions.json
+/hetzner/server/versions
 /hetzner/server/1.0.0/download
 ```
 
 **`json`** — a JSON array of paths:
 ```json
 [
-  "/hetzner/server/versions.json",
+  "/hetzner/server/versions",
   "/hetzner/server/1.0.0/download"
 ]
 ```
@@ -207,7 +207,7 @@ The `--invalidation-file` flag writes all CDN paths that need cache invalidation
   "Paths": {
     "Quantity": 2,
     "Items": [
-      "/hetzner/server/versions.json",
+      "/hetzner/server/versions",
       "/hetzner/server/1.0.0/download"
     ]
   },
@@ -378,7 +378,7 @@ tfr-static serve --dev
 
 In dev mode:
 - `/.well-known/terraform.json` returns the service discovery document
-- `/{module}/versions.json` returns all real tagged versions plus synthetic dev versions (`0.0.0-dev` and `99999.0.0-dev`) so that any version constraint can match
+- `/{module}/versions` returns all real tagged versions plus synthetic dev versions (`0.0.0-dev` and `99999.0.0-dev`) so that any version constraint can match
 - `/{module}/{version}/download` always points to an on-the-fly archive regardless of the requested version
 - Archives are built from the filesystem (not from git), so uncommitted changes are included
 - Browsable HTML pages are served at `/`, `/{module}/`, and `/{module}/{version}/` with README rendering
@@ -396,7 +396,7 @@ target/
 │   └── terraform.json
 └── hetzner/
     └── server/
-        ├── versions.json
+        ├── versions
         ├── 0.1.0/
         │   ├── download
         │   └── module.tar.gz
@@ -421,7 +421,7 @@ The `download` file is an HTML page that Terraform uses for module source resolu
 <meta name="terraform-get" content="https://registry.example.com/hetzner/server/1.0.0/module.tar.gz" />
 ```
 
-The `versions.json` file follows the [module versions protocol](https://developer.hashicorp.com/terraform/internals/module-registry-protocol#list-available-versions-for-a-module):
+The `versions` file follows the [module versions protocol](https://developer.hashicorp.com/terraform/internals/module-registry-protocol#list-available-versions-for-a-module):
 
 ```json
 {
