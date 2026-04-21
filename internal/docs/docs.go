@@ -17,7 +17,15 @@ const (
 )
 
 // Generate produces terraform-docs markdown table output for a module directory.
+// It looks for .terraform-docs.yml in moduleDir itself.
 func Generate(moduleDir string) (string, error) {
+	return GenerateWithConfig(moduleDir, moduleDir)
+}
+
+// GenerateWithConfig produces terraform-docs markdown table output.
+// moduleDir contains the .tf files to document. configDir is where to look
+// for .terraform-docs.yml/.yaml configuration.
+func GenerateWithConfig(moduleDir, configDir string) (string, error) {
 	if !hasTFFiles(moduleDir) {
 		return "", nil
 	}
@@ -26,8 +34,7 @@ func Generate(moduleDir string) (string, error) {
 	config.ModuleRoot = moduleDir
 	config.Formatter = "markdown table"
 
-	// Try to load .terraform-docs.yml from the module dir
-	if cfgFile := findConfig(moduleDir); cfgFile != "" {
+	if cfgFile := findConfig(configDir); cfgFile != "" {
 		if fileCfg, err := print.ReadConfig(filepath.Dir(cfgFile), filepath.Base(cfgFile)); err == nil {
 			fileCfg.ModuleRoot = moduleDir
 			if fileCfg.Formatter == "" {
@@ -77,11 +84,26 @@ func InjectIntoReadme(readme, docs string) string {
 	return readme + "\n\n" + docs
 }
 
-func findConfig(moduleDir string) string {
-	for _, name := range []string{".terraform-docs.yml", ".terraform-docs.yaml"} {
-		p := filepath.Join(moduleDir, name)
-		if _, err := os.Stat(p); err == nil {
-			return p
+func findConfig(configDir string) string {
+	home, _ := os.UserHomeDir()
+
+	dirs := []string{
+		configDir,
+		filepath.Join(configDir, ".config"),
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		dirs = append(dirs, cwd, filepath.Join(cwd, ".config"))
+	}
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".tfdocs.d"))
+	}
+
+	for _, dir := range dirs {
+		for _, name := range []string{".terraform-docs.yml", ".terraform-docs.yaml"} {
+			p := filepath.Join(dir, name)
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
 		}
 	}
 	return ""

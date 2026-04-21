@@ -280,7 +280,15 @@ The `--terraform-docs` flag automatically generates documentation for each modul
 tfr-static publish --all --html --terraform-docs
 ```
 
-If a module's `README.md` contains `<!-- BEGIN_TF_DOCS -->` / `<!-- END_TF_DOCS -->` markers, the generated documentation replaces the content between them. Otherwise it is appended to the README. Modules can also include a `.terraform-docs.yml` or `.terraform-docs.yaml` file to customize the output format.
+If a module's `README.md` contains `<!-- BEGIN_TF_DOCS -->` / `<!-- END_TF_DOCS -->` markers, the generated documentation replaces the content between them. Otherwise it is appended to the README.
+
+A `.terraform-docs.yml` or `.terraform-docs.yaml` file can be used to customize the output format. The config file is searched for in the following locations (first match wins):
+
+1. The module directory
+2. The module directory's `.config/` subdirectory
+3. The current working directory
+4. The current working directory's `.config/` subdirectory
+5. `$HOME/.tfdocs.d/`
 
 #### Pre-compressed upload with `--gzip`
 

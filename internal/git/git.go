@@ -1,7 +1,9 @@
 package git
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -74,6 +76,53 @@ func (r *Runner) ArchiveModule(tag, modulePath, destPath string) error {
 		tag+":"+modulePath,
 	)
 	return err
+}
+
+// ExtractModuleAtTag extracts a module directory at a given tag into a
+// temporary directory and returns its path. The caller must call the returned
+// cleanup function when done.
+func (r *Runner) ExtractModuleAtTag(tag, modulePath string) (string, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "tfr-docs-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("creating temp dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) }
+
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("creating extract dir: %w", err)
+	}
+
+	gitCmd := exec.Command("git", "archive", tag+":"+modulePath)
+	gitCmd.Dir = r.RepoPath
+
+	tarCmd := exec.Command("tar", "-xf", "-", "-C", tmpDir)
+
+	pipe, err := gitCmd.StdoutPipe()
+	if err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("creating pipe: %w", err)
+	}
+	tarCmd.Stdin = pipe
+
+	var tarErr bytes.Buffer
+	tarCmd.Stderr = &tarErr
+
+	if err := tarCmd.Start(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("starting tar: %w", err)
+	}
+	if err := gitCmd.Run(); err != nil {
+		tarCmd.Wait()
+		cleanup()
+		return "", nil, fmt.Errorf("git archive %s:%s: %w", tag, modulePath, err)
+	}
+	if err := tarCmd.Wait(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("extracting archive: %s: %w", strings.TrimSpace(tarErr.String()), err)
+	}
+
+	return tmpDir, cleanup, nil
 }
 
 // CurrentBranch returns the current branch name.

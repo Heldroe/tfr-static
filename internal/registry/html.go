@@ -61,12 +61,21 @@ func FilesystemReadmeReader(repoRoot string) ReadmeReader {
 }
 
 // EnrichedReadmeReader wraps a base ReadmeReader and enriches the output
-// with terraform-docs generated documentation.
-func EnrichedReadmeReader(base ReadmeReader, repoRoot string) ReadmeReader {
+// with terraform-docs generated documentation. Module .tf files are read from
+// the git tag (so each version gets its own docs), while .terraform-docs.yml
+// config is read from the current filesystem (so config changes are retroactive).
+func EnrichedReadmeReader(base ReadmeReader, repoRoot string, gitRunner *git.Runner) ReadmeReader {
 	return func(modulePath, tag string) string {
 		readme := base(modulePath, tag)
-		moduleDir := filepath.Join(repoRoot, modulePath)
-		docsOutput, err := docs.Generate(moduleDir)
+		configDir := filepath.Join(repoRoot, modulePath)
+
+		extractDir, cleanup, err := gitRunner.ExtractModuleAtTag(tag, modulePath)
+		if err != nil {
+			return readme
+		}
+		defer cleanup()
+
+		docsOutput, err := docs.GenerateWithConfig(extractDir, configDir)
 		if err != nil || docsOutput == "" {
 			return readme
 		}

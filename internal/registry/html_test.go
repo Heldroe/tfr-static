@@ -343,6 +343,126 @@ func TestHTMLGenerator_VersionReadmeFromTag(t *testing.T) {
 	assertFileContains(t, modIndex, "Version TWO")
 }
 
+func TestEnrichedReadmeReader_UsesTagState(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+
+	run("init", "-b", "main")
+
+	modDir := filepath.Join(tmpDir, "mymod")
+	os.MkdirAll(modDir, 0o755)
+
+	// v1: has variable "old_var"
+	os.WriteFile(filepath.Join(modDir, "main.tf"), []byte(`
+variable "old_var" {
+  description = "Variable from v1"
+  type        = string
+}
+`), 0o644)
+	os.WriteFile(filepath.Join(modDir, "README.md"), []byte("# My Module v1"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "v1")
+	run("tag", "-a", "mymod-1.0.0", "-m", "v1.0.0")
+
+	// v2: has variable "new_var" instead
+	os.WriteFile(filepath.Join(modDir, "main.tf"), []byte(`
+variable "new_var" {
+  description = "Variable from v2"
+  type        = string
+}
+`), 0o644)
+	os.WriteFile(filepath.Join(modDir, "README.md"), []byte("# My Module v2"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "v2")
+	run("tag", "-a", "mymod-2.0.0", "-m", "v2.0.0")
+
+	gitRunner := git.NewRunner(tmpDir)
+	base := GitReadmeReader(gitRunner)
+	reader := EnrichedReadmeReader(base, tmpDir, gitRunner)
+
+	v1Content := reader("mymod", "mymod-1.0.0")
+	v2Content := reader("mymod", "mymod-2.0.0")
+
+	if !strings.Contains(v1Content, "old_var") {
+		t.Errorf("v1 should contain old_var from the tagged state, got:\n%s", v1Content)
+	}
+	if strings.Contains(v1Content, "new_var") {
+		t.Errorf("v1 should NOT contain new_var (that's from v2), got:\n%s", v1Content)
+	}
+	if !strings.Contains(v2Content, "new_var") {
+		t.Errorf("v2 should contain new_var, got:\n%s", v2Content)
+	}
+	if strings.Contains(v2Content, "old_var") {
+		t.Errorf("v2 should NOT contain old_var (that's from v1), got:\n%s", v2Content)
+	}
+}
+
+func TestEnrichedReadmeReader_UsesCurrentConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s: %v", strings.Join(args, " "), out, err)
+		}
+	}
+
+	run("init", "-b", "main")
+
+	modDir := filepath.Join(tmpDir, "mymod")
+	os.MkdirAll(modDir, 0o755)
+	os.WriteFile(filepath.Join(modDir, "main.tf"), []byte(`
+variable "name" {
+  description = "The name"
+  type        = string
+}
+`), 0o644)
+	os.WriteFile(filepath.Join(modDir, "README.md"), []byte("# My Module"), 0o644)
+	run("add", ".")
+	run("commit", "-m", "v1")
+	run("tag", "-a", "mymod-1.0.0", "-m", "v1.0.0")
+
+	// Add .terraform-docs.yml AFTER the tag — only on current filesystem
+	os.WriteFile(filepath.Join(modDir, ".terraform-docs.yml"), []byte(`
+formatter: markdown document
+`), 0o644)
+
+	gitRunner := git.NewRunner(tmpDir)
+	base := GitReadmeReader(gitRunner)
+	reader := EnrichedReadmeReader(base, tmpDir, gitRunner)
+
+	content := reader("mymod", "mymod-1.0.0")
+
+	// "markdown document" formatter uses ### headers instead of tables
+	if !strings.Contains(content, "name") {
+		t.Errorf("should contain the variable name from the tagged .tf files, got:\n%s", content)
+	}
+}
+
 func TestHTMLGenerator_DevVersionIncluded(t *testing.T) {
 	repoPath, gitRunner := setupHTMLTestRepo(t)
 	outputDir := t.TempDir()

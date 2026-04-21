@@ -143,7 +143,7 @@ func runPublish(cmd *cobra.Command, args []string) error {
 			repoRoot, _ := gitRunner.TopLevel()
 			reader := registry.GitReadmeReader(gitRunner)
 			if cfg.TerraformDocs && repoRoot != "" {
-				reader = registry.EnrichedReadmeReader(reader, repoRoot)
+				reader = registry.EnrichedReadmeReader(reader, repoRoot, gitRunner)
 			}
 			gen, err := newHTMLGenerator(gitRunner, reader)
 			if err != nil {
@@ -427,7 +427,7 @@ func runPublishDev(cmd *cobra.Command) error {
 
 		reader := registry.FilesystemReadmeReader(repoRoot)
 		if cfg.TerraformDocs {
-			reader = registry.EnrichedReadmeReader(reader, repoRoot)
+			reader = registry.EnrichedReadmeReader(reader, repoRoot, gitRunner)
 		}
 		if err := generateHTML(gitRunner, reader, grouped); err != nil {
 			return fmt.Errorf("generating HTML documentation: %w", err)
