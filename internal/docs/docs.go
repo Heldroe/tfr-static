@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/viper"
 	"github.com/terraform-docs/terraform-docs/format"
@@ -15,6 +16,11 @@ import (
 const (
 	beginMarker = "<!-- BEGIN_TF_DOCS -->"
 	endMarker   = "<!-- END_TF_DOCS -->"
+)
+
+var (
+	configCacheMu sync.Mutex
+	configCache   = map[string]*print.Config{}
 )
 
 // Generate produces terraform-docs markdown table output for a module directory.
@@ -31,32 +37,19 @@ func GenerateWithConfig(moduleDir, configDir string) (string, error) {
 		return "", nil
 	}
 
-	config := print.DefaultConfig()
-	config.ModuleRoot = moduleDir
-	config.Formatter = "markdown table"
-
-	if cfgFile := findConfig(configDir); cfgFile != "" {
-		v := viper.New()
-		v.SetConfigFile(cfgFile)
-		if err := v.ReadInConfig(); err != nil {
-			return "", fmt.Errorf("reading terraform-docs config %s: %w", cfgFile, err)
-		}
-		if err := v.Unmarshal(config); err != nil {
-			return "", fmt.Errorf("parsing terraform-docs config %s: %w", cfgFile, err)
-		}
-		fmt.Fprintf(os.Stderr, "terraform-docs: loaded config from %s\n", cfgFile)
-	} else {
-		fmt.Fprintf(os.Stderr, "terraform-docs: no config file found (searched %s), using defaults\n", configDir)
+	base, err := loadConfig(configDir)
+	if err != nil {
+		return "", err
 	}
+	config := *base
+	config.ModuleRoot = moduleDir
 
-	config.Parse()
-
-	module, err := terraform.LoadWithOptions(config)
+	module, err := terraform.LoadWithOptions(&config)
 	if err != nil {
 		return "", fmt.Errorf("loading terraform module from %s: %w", moduleDir, err)
 	}
 
-	formatter, err := format.New(config)
+	formatter, err := format.New(&config)
 	if err != nil {
 		return "", fmt.Errorf("creating formatter: %w", err)
 	}
@@ -87,6 +80,39 @@ func InjectIntoReadme(readme, docs string) string {
 		return docs
 	}
 	return readme + "\n\n" + docs
+}
+
+// loadConfig resolves and parses the terraform-docs config once per configDir.
+// The returned *print.Config is shared — callers must copy it before mutating.
+func loadConfig(configDir string) (*print.Config, error) {
+	configCacheMu.Lock()
+	defer configCacheMu.Unlock()
+
+	if cached, ok := configCache[configDir]; ok {
+		return cached, nil
+	}
+
+	config := print.DefaultConfig()
+	config.Formatter = "markdown table"
+
+	cfgFile := findConfig(configDir)
+	if cfgFile == "" {
+		fmt.Fprintf(os.Stderr, "terraform-docs: no config file found, using defaults\n")
+	} else {
+		v := viper.New()
+		v.SetConfigFile(cfgFile)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("reading terraform-docs config %s: %w", cfgFile, err)
+		}
+		if err := v.Unmarshal(config); err != nil {
+			return nil, fmt.Errorf("parsing terraform-docs config %s: %w", cfgFile, err)
+		}
+		fmt.Fprintf(os.Stderr, "terraform-docs: loaded config from %s\n", cfgFile)
+	}
+	config.Parse()
+
+	configCache[configDir] = config
+	return config, nil
 }
 
 func findConfig(configDir string) string {
