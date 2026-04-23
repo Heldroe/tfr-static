@@ -202,8 +202,8 @@ func (g *HTMLGenerator) GenerateForVersion(tag module.TagInfo, moduleTags []modu
 		return fmt.Errorf("generating version index for %s: %w", tag.Tag, err)
 	}
 
-	if err := g.generateModuleIndex(tag.ModulePath, moduleTags); err != nil {
-		return fmt.Errorf("generating module index for %s: %w", tag.ModulePath, err)
+	if err := g.generateModuleIndex(tag.RegistryPath, moduleTags); err != nil {
+		return fmt.Errorf("generating module index for %s: %w", tag.RegistryPath, err)
 	}
 
 	return g.generateRootIndex(allGrouped)
@@ -211,14 +211,18 @@ func (g *HTMLGenerator) GenerateForVersion(tag module.TagInfo, moduleTags []modu
 
 func (g *HTMLGenerator) generateRootIndex(grouped map[string][]module.TagInfo) error {
 	var entries []rootModuleEntry
-	for modPath, tags := range grouped {
+	for _, tags := range grouped {
+		if len(tags) == 0 {
+			continue
+		}
+		regPath := tags[0].EffectiveRegistryPath()
 		latest := module.LatestVersion(tags)
 		latestStr := ""
 		if latest != nil {
 			latestStr = latest.Version.Original()
 		}
 		entries = append(entries, rootModuleEntry{
-			Path:          modPath,
+			Path:          regPath,
 			LatestVersion: latestStr,
 			VersionCount:  len(tags),
 		})
@@ -237,37 +241,42 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 		versions[i] = t.Version.Original()
 	}
 
-	// Module index uses the latest (first after sort) tag's README
+	regPath := modPath
+	if len(tags) > 0 {
+		regPath = tags[0].EffectiveRegistryPath()
+	}
+
 	var readmeHTML template.HTML
 	if len(tags) > 0 {
-		readmeHTML = renderMarkdown(g.readReadme(modPath, tags[0].Tag))
+		readmeHTML = renderMarkdown(g.readReadme(tags[0].ModulePath, tags[0].Tag))
 	}
 
 	data := modulePageData{
-		ModulePath: modPath,
+		ModulePath: regPath,
 		Versions:   versions,
 		ReadmeHTML: readmeHTML,
 	}
-	dir := filepath.Join(g.OutputDir, modPath)
-	return g.writePage(filepath.Join(dir, g.IndexFile), modPath, moduleTmpl, data)
+	dir := filepath.Join(g.OutputDir, regPath)
+	return g.writePage(filepath.Join(dir, g.IndexFile), regPath, moduleTmpl, data)
 }
 
 func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 	archiveFile := archiveName(tag.ModulePath, tag.Version)
 	archiveURL := archiveFile
 
-	// Each version page reads README from its own tag
+	regPath := tag.EffectiveRegistryPath()
+
 	readmeHTML := renderMarkdown(g.readReadme(tag.ModulePath, tag.Tag))
 
 	data := versionPageData{
-		ModulePath:          tag.ModulePath,
+		ModulePath:          regPath,
 		Version:             tag.Version.Original(),
 		ArchiveURL:          archiveURL,
-		ArchiveDownloadName: descriptiveArchiveName(tag.ModulePath, tag.Version),
+		ArchiveDownloadName: descriptiveArchiveName(regPath, tag.Version),
 		ReadmeHTML:          readmeHTML,
 	}
-	dir := filepath.Join(g.OutputDir, tag.ModulePath, tag.Version.Original())
-	return g.writePage(filepath.Join(dir, g.IndexFile), tag.ModulePath+" "+tag.Version.Original(), versionTmpl, data)
+	dir := filepath.Join(g.OutputDir, regPath, tag.Version.Original())
+	return g.writePage(filepath.Join(dir, g.IndexFile), regPath+" "+tag.Version.Original(), versionTmpl, data)
 }
 
 // readReadme returns the raw README content for a module, using the ReadmeReader

@@ -42,6 +42,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfg.RepoPath, "repo", "", "path to the git repository")
 	rootCmd.PersistentFlags().StringVar(&cfg.MainBranch, "main-branch", "", "expected main branch name")
 	rootCmd.PersistentFlags().StringVar(&cfg.ModulesPath, "modules-path", "", "path prefix for modules.v1 in service discovery")
+	rootCmd.PersistentFlags().StringVar(&cfg.Namespace, "namespace", "", "default namespace for auto-derived registry paths (default \"modules\")")
 }
 
 // loadConfig applies configuration with precedence:
@@ -68,7 +69,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex *string
+	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex, fileNamespace *string
 	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL, fileHTMLBase *string
 	var fileHTML, fileGzip, fileTerraformDocs *bool
 	var fileInvalidationFullURL, fileInvalidationURLEncode, fileInvalidationDirs *bool
@@ -88,6 +89,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileInvalidationURLEncode = fileCfg.InvalidationURLEncode
 		fileInvalidationDirs = fileCfg.InvalidationDirs
 		fileHTMLBase = fileCfg.HTMLBase
+		fileNamespace = fileCfg.Namespace
 	}
 
 	cfg.BaseURL = resolveValue(
@@ -180,6 +182,20 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileHTMLBase,
 		"",
 	)
+	cfg.Namespace = resolveValue(
+		flagIfChanged(cmd, "namespace"),
+		os.Getenv("TFR_NAMESPACE"),
+		fileNamespace,
+		"modules",
+	)
+
+	cfg.ModuleMappings = make(map[string]string)
+	if fileCfg != nil {
+		for _, m := range fileCfg.Modules {
+			cfg.ModuleMappings[m.DirPath] = m.RegistryPath
+		}
+	}
+
 	return nil
 }
 

@@ -10,6 +10,12 @@ import (
 
 const ConfigFileName = ".tfr-static.hcl"
 
+// ModuleBlock maps a directory path to a custom 3-segment registry path.
+type ModuleBlock struct {
+	DirPath      string `hcl:"dir_path,label"`
+	RegistryPath string `hcl:"registry_path"`
+}
+
 // FileConfig represents the HCL config file structure.
 type FileConfig struct {
 	BaseURL              *string `hcl:"base_url,optional"`
@@ -27,6 +33,8 @@ type FileConfig struct {
 	InvalidationURLEncode *bool  `hcl:"invalidation_url_encode,optional"`
 	InvalidationDirs      *bool   `hcl:"invalidation_dirs,optional"`
 	HTMLBase              *string `hcl:"html_base,optional"`
+	Namespace             *string `hcl:"namespace,optional"`
+	Modules              []ModuleBlock `hcl:"module,block"`
 }
 
 // Config holds the resolved configuration for tfr-static.
@@ -47,6 +55,8 @@ type Config struct {
 	InvalidationURLEncode bool
 	InvalidationDirs      bool
 	HTMLBase              string
+	Namespace             string
+	ModuleMappings        map[string]string
 }
 
 // LoadFileConfig reads the .tfr-static.hcl config file from the given directory.

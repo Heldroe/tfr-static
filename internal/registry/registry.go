@@ -41,24 +41,26 @@ type Publisher struct {
 	ModulesPath string
 }
 
+func normalizeModulesPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if !strings.HasSuffix(p, "/") {
+		p = p + "/"
+	}
+	return p
+}
+
 // NewPublisher creates a new Publisher.
 func NewPublisher(gitRunner *git.Runner, outputDir, baseURL, modulesPath string) *Publisher {
-	// Ensure modules path has leading and trailing slashes
-	if modulesPath == "" {
-		modulesPath = "/"
-	}
-	if !strings.HasPrefix(modulesPath, "/") {
-		modulesPath = "/" + modulesPath
-	}
-	if !strings.HasSuffix(modulesPath, "/") {
-		modulesPath = modulesPath + "/"
-	}
-
 	return &Publisher{
 		Git:         gitRunner,
 		OutputDir:   outputDir,
 		BaseURL:     strings.TrimRight(baseURL, "/"),
-		ModulesPath: modulesPath,
+		ModulesPath: normalizeModulesPath(modulesPath),
 	}
 }
 
@@ -101,22 +103,23 @@ func descriptiveArchiveName(modulePath string, version *semver.Version) string {
 // PublishVersion generates all files for a single module version.
 // It creates: the archive, the download HTML, and returns the version string.
 // The caller is responsible for generating the versions after all versions are published.
+// tag.ModulePath is used for git operations; tag.RegistryPath for output paths and URLs.
 func (p *Publisher) PublishVersion(tag module.TagInfo) error {
-	versionDir := filepath.Join(p.OutputDir, tag.ModulePath, tag.Version.Original())
+	versionDir := filepath.Join(p.OutputDir, tag.RegistryPath, tag.Version.Original())
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return fmt.Errorf("creating version directory: %w", err)
 	}
 
-	// Generate archive
+	// Generate archive (git uses the directory path)
 	archiveFile := archiveName(tag.ModulePath, tag.Version)
 	archivePath := filepath.Join(versionDir, archiveFile)
 	if err := p.Git.ArchiveModule(tag.Tag, tag.ModulePath, archivePath); err != nil {
 		return fmt.Errorf("archiving module %s at %s: %w", tag.ModulePath, tag.Tag, err)
 	}
 
-	// Generate download HTML
+	// Generate download HTML (URL uses the registry path)
 	archiveURL := fmt.Sprintf("%s/%s/%s/%s",
-		p.BaseURL, tag.ModulePath, tag.Version.Original(), archiveFile)
+		p.BaseURL, tag.RegistryPath, tag.Version.Original(), archiveFile)
 	downloadHTML := generateDownloadHTML(archiveURL)
 	downloadPath := filepath.Join(versionDir, "download")
 	if err := os.WriteFile(downloadPath, []byte(downloadHTML), 0o644); err != nil {
@@ -128,13 +131,15 @@ func (p *Publisher) PublishVersion(tag module.TagInfo) error {
 
 // PublishVersionFromWorkTree generates all files for a module version using
 // the current filesystem (working tree) instead of a git tag.
-func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, version *semver.Version) error {
-	versionDir := filepath.Join(p.OutputDir, modulePath, version.Original())
+// modulePath is the directory path (for filesystem operations);
+// registryPath is the 3-segment path (for output structure and URLs).
+func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath, registryPath string, version *semver.Version) error {
+	versionDir := filepath.Join(p.OutputDir, registryPath, version.Original())
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		return fmt.Errorf("creating version directory: %w", err)
 	}
 
-	// Generate archive from working tree
+	// Generate archive from working tree (uses directory path)
 	archiveFile := archiveName(modulePath, version)
 	archivePath := filepath.Join(versionDir, archiveFile)
 	f, err := os.Create(archivePath)
@@ -147,9 +152,9 @@ func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, vers
 	}
 	f.Close()
 
-	// Generate download HTML
+	// Generate download HTML (URL uses registry path)
 	archiveURL := fmt.Sprintf("%s/%s/%s/%s",
-		p.BaseURL, modulePath, version.Original(), archiveFile)
+		p.BaseURL, registryPath, version.Original(), archiveFile)
 	downloadHTML := generateDownloadHTML(archiveURL)
 	downloadPath := filepath.Join(versionDir, "download")
 	if err := os.WriteFile(downloadPath, []byte(downloadHTML), 0o644); err != nil {
@@ -160,8 +165,9 @@ func (p *Publisher) PublishVersionFromWorkTree(repoRoot, modulePath string, vers
 }
 
 // GenerateVersionsJSON creates the versions file for a module.
-func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.Version) error {
-	moduleDir := filepath.Join(p.OutputDir, modulePath)
+// registryPath is the 3-segment path used for the output directory structure.
+func (p *Publisher) GenerateVersionsJSON(registryPath string, versions []*semver.Version) error {
+	moduleDir := filepath.Join(p.OutputDir, registryPath)
 	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
 		return fmt.Errorf("creating module directory: %w", err)
 	}
@@ -198,19 +204,20 @@ func (p *Publisher) GenerateVersionsJSON(modulePath string, versions []*semver.V
 // InvalidationPathsForNewVersion returns CDN paths to invalidate when publishing
 // a single new tag. The new version's own files (download, HTML) are excluded
 // because they are brand-new URLs that have never been cached.
-func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
+// registryPath is the 3-segment path used in URLs.
+func InvalidationPathsForNewVersion(registryPath string, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
 	paths := []string{
-		fmt.Sprintf("/%s/versions", modulePath),
+		fmt.Sprintf("/%s/versions", registryPath),
 	}
 	if htmlEnabled {
 		paths = append(paths, "/"+indexFile)
 		if dirsEnabled {
 			paths = append(paths, "/")
 		}
-		modIndex := fmt.Sprintf("/%s/%s", modulePath, indexFile)
+		modIndex := fmt.Sprintf("/%s/%s", registryPath, indexFile)
 		paths = append(paths, modIndex)
 		if dirsEnabled {
-			paths = append(paths, fmt.Sprintf("/%s/", modulePath))
+			paths = append(paths, fmt.Sprintf("/%s/", registryPath))
 		}
 	}
 	return paths
@@ -219,17 +226,18 @@ func InvalidationPathsForNewVersion(modulePath string, htmlEnabled bool, indexFi
 // InvalidationPathsForModuleRebuild returns CDN paths to invalidate when
 // rebuilding all versions of a module. Every version's download and HTML pages
 // are included since they are all regenerated.
-func InvalidationPathsForModuleRebuild(modulePath string, versions []*semver.Version, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
+// registryPath is the 3-segment path used in URLs.
+func InvalidationPathsForModuleRebuild(registryPath string, versions []*semver.Version, htmlEnabled bool, indexFile string, dirsEnabled bool) []string {
 	paths := []string{
-		fmt.Sprintf("/%s/versions", modulePath),
+		fmt.Sprintf("/%s/versions", registryPath),
 	}
 	for _, v := range versions {
-		paths = append(paths, fmt.Sprintf("/%s/%s/download", modulePath, v.Original()))
+		paths = append(paths, fmt.Sprintf("/%s/%s/download", registryPath, v.Original()))
 		if htmlEnabled {
-			verIndex := fmt.Sprintf("/%s/%s/%s", modulePath, v.Original(), indexFile)
+			verIndex := fmt.Sprintf("/%s/%s/%s", registryPath, v.Original(), indexFile)
 			paths = append(paths, verIndex)
 			if dirsEnabled {
-				paths = append(paths, fmt.Sprintf("/%s/%s/", modulePath, v.Original()))
+				paths = append(paths, fmt.Sprintf("/%s/%s/", registryPath, v.Original()))
 			}
 		}
 	}
@@ -238,9 +246,9 @@ func InvalidationPathsForModuleRebuild(modulePath string, versions []*semver.Ver
 		if dirsEnabled {
 			paths = append(paths, "/")
 		}
-		paths = append(paths, fmt.Sprintf("/%s/%s", modulePath, indexFile))
+		paths = append(paths, fmt.Sprintf("/%s/%s", registryPath, indexFile))
 		if dirsEnabled {
-			paths = append(paths, fmt.Sprintf("/%s/", modulePath))
+			paths = append(paths, fmt.Sprintf("/%s/", registryPath))
 		}
 	}
 	return paths

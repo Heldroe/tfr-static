@@ -71,23 +71,24 @@ func TestPublishVersion(t *testing.T) {
 	pub := NewPublisher(gitRunner, outputDir, "https://registry.example.com", "/")
 
 	tag := module.TagInfo{
-		Tag:        "hetzner/server-1.0.0",
-		ModulePath: "hetzner/server",
-		Version:    semver.MustParse("1.0.0"),
+		Tag:          "hetzner/server-1.0.0",
+		ModulePath:   "hetzner/server",
+		RegistryPath: "modules/server/hetzner",
+		Version:      semver.MustParse("1.0.0"),
 	}
 
 	if err := pub.PublishVersion(tag); err != nil {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
-	// Check archive exists
-	archivePath := filepath.Join(outputDir, "hetzner/server/1.0.0/module.tar.gz")
+	// Check archive exists (output uses registry path)
+	archivePath := filepath.Join(outputDir, "modules/server/hetzner/1.0.0/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created")
 	}
 
 	// Check download file exists and contains correct content
-	downloadPath := filepath.Join(outputDir, "hetzner/server/1.0.0/download")
+	downloadPath := filepath.Join(outputDir, "modules/server/hetzner/1.0.0/download")
 	data, err := os.ReadFile(downloadPath)
 	if err != nil {
 		t.Fatalf("reading download file: %v", err)
@@ -96,7 +97,7 @@ func TestPublishVersion(t *testing.T) {
 	if !strings.Contains(content, `<meta name="terraform-get"`) {
 		t.Error("download file missing terraform-get meta tag")
 	}
-	expectedURL := "https://registry.example.com/hetzner/server/1.0.0/module.tar.gz"
+	expectedURL := "https://registry.example.com/modules/server/hetzner/1.0.0/module.tar.gz"
 	if !strings.Contains(content, expectedURL) {
 		t.Errorf("download file doesn't contain expected URL %q, got:\n%s", expectedURL, content)
 	}
@@ -111,16 +112,17 @@ func TestPublishVersionDashInModuleName(t *testing.T) {
 	pub := NewPublisher(gitRunner, outputDir, "https://registry.example.com", "/")
 
 	tag := module.TagInfo{
-		Tag:        "aws/ec2/security-group-0.0.1",
-		ModulePath: "aws/ec2/security-group",
-		Version:    semver.MustParse("0.0.1"),
+		Tag:          "aws/ec2/security-group-0.0.1",
+		ModulePath:   "aws/ec2/security-group",
+		RegistryPath: "modules/ec2-security-group/aws",
+		Version:      semver.MustParse("0.0.1"),
 	}
 
 	if err := pub.PublishVersion(tag); err != nil {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
-	archivePath := filepath.Join(outputDir, "aws/ec2/security-group/0.0.1/module.tar.gz")
+	archivePath := filepath.Join(outputDir, "modules/ec2-security-group/aws/0.0.1/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created for dash-named module")
 	}
@@ -134,18 +136,19 @@ func TestPublishNestedModule(t *testing.T) {
 	gitRunner := git.NewRunner(repoPath)
 	pub := NewPublisher(gitRunner, outputDir, "https://registry.example.com", "/")
 
-	// Publish the parent module aws/ec2
+	// Publish the parent module aws/ec2 (2-part, registry path is auto-derived)
 	tag := module.TagInfo{
-		Tag:        "aws/ec2-1.0.0",
-		ModulePath: "aws/ec2",
-		Version:    semver.MustParse("1.0.0"),
+		Tag:          "aws/ec2-1.0.0",
+		ModulePath:   "aws/ec2",
+		RegistryPath: "modules/ec2/aws",
+		Version:      semver.MustParse("1.0.0"),
 	}
 
 	if err := pub.PublishVersion(tag); err != nil {
 		t.Fatalf("PublishVersion() error: %v", err)
 	}
 
-	archivePath := filepath.Join(outputDir, "aws/ec2/1.0.0/module.tar.gz")
+	archivePath := filepath.Join(outputDir, "modules/ec2/aws/1.0.0/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created for nested parent module")
 	}
@@ -163,11 +166,11 @@ func TestGenerateVersionsJSON(t *testing.T) {
 		semver.MustParse("1.9.0"),
 	}
 
-	if err := pub.GenerateVersionsJSON("hetzner/server", versions); err != nil {
+	if err := pub.GenerateVersionsJSON("modules/server/hetzner", versions); err != nil {
 		t.Fatalf("GenerateVersionsJSON() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(outputDir, "hetzner/server/versions"))
+	data, err := os.ReadFile(filepath.Join(outputDir, "modules/server/hetzner/versions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,21 +199,21 @@ func TestGenerateVersionsJSON(t *testing.T) {
 }
 
 func TestInvalidationPathsForNewVersion(t *testing.T) {
-	// Without HTML
-	paths := InvalidationPathsForNewVersion("hetzner/server", false, "index.html", false)
+	// Without HTML (uses 3-segment registry path)
+	paths := InvalidationPathsForNewVersion("modules/server/hetzner", false, "index.html", false)
 	if len(paths) != 1 {
 		t.Fatalf("expected 1 path, got %d: %v", len(paths), paths)
 	}
-	if paths[0] != "/hetzner/server/versions" {
+	if paths[0] != "/modules/server/hetzner/versions" {
 		t.Errorf("paths[0] = %q", paths[0])
 	}
 
 	// With HTML, no dirs
-	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html", false)
+	paths = InvalidationPathsForNewVersion("modules/server/hetzner", true, "index.html", false)
 	expected := []string{
-		"/hetzner/server/versions",
+		"/modules/server/hetzner/versions",
 		"/index.html",
-		"/hetzner/server/index.html",
+		"/modules/server/hetzner/index.html",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
@@ -222,13 +225,13 @@ func TestInvalidationPathsForNewVersion(t *testing.T) {
 	}
 
 	// With HTML and dirs
-	paths = InvalidationPathsForNewVersion("hetzner/server", true, "index.html", true)
+	paths = InvalidationPathsForNewVersion("modules/server/hetzner", true, "index.html", true)
 	expected = []string{
-		"/hetzner/server/versions",
+		"/modules/server/hetzner/versions",
 		"/index.html",
 		"/",
-		"/hetzner/server/index.html",
-		"/hetzner/server/",
+		"/modules/server/hetzner/index.html",
+		"/modules/server/hetzner/",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
@@ -246,12 +249,12 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 		semver.MustParse("0.1.0"),
 	}
 
-	// Without HTML
-	paths := InvalidationPathsForModuleRebuild("hetzner/server", versions, false, "index.html", false)
+	// Without HTML (uses 3-segment registry path)
+	paths := InvalidationPathsForModuleRebuild("modules/server/hetzner", versions, false, "index.html", false)
 	expected := []string{
-		"/hetzner/server/versions",
-		"/hetzner/server/1.0.0/download",
-		"/hetzner/server/0.1.0/download",
+		"/modules/server/hetzner/versions",
+		"/modules/server/hetzner/1.0.0/download",
+		"/modules/server/hetzner/0.1.0/download",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
@@ -263,15 +266,15 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 	}
 
 	// With HTML, no dirs
-	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html", false)
+	paths = InvalidationPathsForModuleRebuild("modules/server/hetzner", versions, true, "index.html", false)
 	expected = []string{
-		"/hetzner/server/versions",
-		"/hetzner/server/1.0.0/download",
-		"/hetzner/server/1.0.0/index.html",
-		"/hetzner/server/0.1.0/download",
-		"/hetzner/server/0.1.0/index.html",
+		"/modules/server/hetzner/versions",
+		"/modules/server/hetzner/1.0.0/download",
+		"/modules/server/hetzner/1.0.0/index.html",
+		"/modules/server/hetzner/0.1.0/download",
+		"/modules/server/hetzner/0.1.0/index.html",
 		"/index.html",
-		"/hetzner/server/index.html",
+		"/modules/server/hetzner/index.html",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
@@ -283,19 +286,19 @@ func TestInvalidationPathsForModuleRebuild(t *testing.T) {
 	}
 
 	// With HTML and dirs
-	paths = InvalidationPathsForModuleRebuild("hetzner/server", versions, true, "index.html", true)
+	paths = InvalidationPathsForModuleRebuild("modules/server/hetzner", versions, true, "index.html", true)
 	expected = []string{
-		"/hetzner/server/versions",
-		"/hetzner/server/1.0.0/download",
-		"/hetzner/server/1.0.0/index.html",
-		"/hetzner/server/1.0.0/",
-		"/hetzner/server/0.1.0/download",
-		"/hetzner/server/0.1.0/index.html",
-		"/hetzner/server/0.1.0/",
+		"/modules/server/hetzner/versions",
+		"/modules/server/hetzner/1.0.0/download",
+		"/modules/server/hetzner/1.0.0/index.html",
+		"/modules/server/hetzner/1.0.0/",
+		"/modules/server/hetzner/0.1.0/download",
+		"/modules/server/hetzner/0.1.0/index.html",
+		"/modules/server/hetzner/0.1.0/",
 		"/index.html",
 		"/",
-		"/hetzner/server/index.html",
-		"/hetzner/server/",
+		"/modules/server/hetzner/index.html",
+		"/modules/server/hetzner/",
 	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
@@ -313,7 +316,7 @@ func TestInvalidationPathsNoDuplicates(t *testing.T) {
 		semver.MustParse("1.0.0"),
 		semver.MustParse("0.1.0"),
 	}
-	paths := InvalidationPathsForModuleRebuild("mymod", versions, true, "index.html", true)
+	paths := InvalidationPathsForModuleRebuild("org/mymod/system", versions, true, "index.html", true)
 	seen := make(map[string]bool)
 	for _, p := range paths {
 		if seen[p] {
@@ -346,7 +349,7 @@ func TestArchiveName(t *testing.T) {
 		version    string
 	}{
 		{"hetzner/server", "1.0.0"},
-		{"aws/ec2/security-group", "0.0.1"},
+		{"modules/ec2-security-group/aws", "0.0.1"},
 		{"simple", "2.0.0"},
 	}
 
@@ -367,7 +370,7 @@ func TestDescriptiveArchiveName(t *testing.T) {
 		want       string
 	}{
 		{"hetzner/server", "1.0.0", "hetzner-server-1.0.0.tar.gz"},
-		{"aws/ec2/security-group", "0.0.1", "aws-ec2-security-group-0.0.1.tar.gz"},
+		{"modules/ec2-security-group/aws", "0.0.1", "modules-ec2-security-group-aws-0.0.1.tar.gz"},
 		{"simple", "2.0.0", "simple-2.0.0.tar.gz"},
 	}
 
@@ -391,9 +394,9 @@ func TestEndToEndPublishAndVersions(t *testing.T) {
 
 	// Publish all versions of hetzner/server
 	tags := []module.TagInfo{
-		{Tag: "hetzner/server-0.1.0", ModulePath: "hetzner/server", Version: semver.MustParse("0.1.0")},
-		{Tag: "hetzner/server-0.2.0", ModulePath: "hetzner/server", Version: semver.MustParse("0.2.0")},
-		{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", Version: semver.MustParse("1.0.0")},
+		{Tag: "hetzner/server-0.1.0", ModulePath: "hetzner/server", RegistryPath: "modules/server/hetzner", Version: semver.MustParse("0.1.0")},
+		{Tag: "hetzner/server-0.2.0", ModulePath: "hetzner/server", RegistryPath: "modules/server/hetzner", Version: semver.MustParse("0.2.0")},
+		{Tag: "hetzner/server-1.0.0", ModulePath: "hetzner/server", RegistryPath: "modules/server/hetzner", Version: semver.MustParse("1.0.0")},
 	}
 
 	var versions []*semver.Version
@@ -404,20 +407,20 @@ func TestEndToEndPublishAndVersions(t *testing.T) {
 		versions = append(versions, tag.Version)
 	}
 
-	if err := pub.GenerateVersionsJSON("hetzner/server", versions); err != nil {
+	if err := pub.GenerateVersionsJSON("modules/server/hetzner", versions); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify all 3 version directories exist
+	// Verify all 3 version directories exist (output uses registry path)
 	for _, v := range []string{"0.1.0", "0.2.0", "1.0.0"} {
-		dir := filepath.Join(outputDir, "hetzner/server", v)
+		dir := filepath.Join(outputDir, "modules/server/hetzner", v)
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			t.Errorf("version directory %q not created", dir)
 		}
 	}
 
 	// Verify versions
-	data, err := os.ReadFile(filepath.Join(outputDir, "hetzner/server/versions"))
+	data, err := os.ReadFile(filepath.Join(outputDir, "modules/server/hetzner/versions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,18 +483,18 @@ func TestPublishVersionFromWorkTree(t *testing.T) {
 	pub := NewPublisher(nil, outputDir, "https://registry.example.com", "/")
 
 	version := semver.MustParse("0.0.0-dev")
-	if err := pub.PublishVersionFromWorkTree(repoPath, "hetzner/server", version); err != nil {
+	if err := pub.PublishVersionFromWorkTree(repoPath, "hetzner/server", "modules/server/hetzner", version); err != nil {
 		t.Fatalf("PublishVersionFromWorkTree() error: %v", err)
 	}
 
-	// Check archive exists
-	archivePath := filepath.Join(outputDir, "hetzner/server/0.0.0-dev/module.tar.gz")
+	// Check archive exists (output uses registry path)
+	archivePath := filepath.Join(outputDir, "modules/server/hetzner/0.0.0-dev/module.tar.gz")
 	if _, err := os.Stat(archivePath); os.IsNotExist(err) {
 		t.Error("archive file not created")
 	}
 
 	// Check download file
-	downloadPath := filepath.Join(outputDir, "hetzner/server/0.0.0-dev/download")
+	downloadPath := filepath.Join(outputDir, "modules/server/hetzner/0.0.0-dev/download")
 	data, err := os.ReadFile(downloadPath)
 	if err != nil {
 		t.Fatalf("reading download file: %v", err)

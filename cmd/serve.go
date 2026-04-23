@@ -61,7 +61,10 @@ func runServeDev() error {
 		return fmt.Errorf("resolving repository root: %w", err)
 	}
 
-	dev := registry.NewDevServer(gitRunner, repoRoot, cfg.ModulesPath)
+	dev, err := registry.NewDevServer(gitRunner, repoRoot, cfg.ModulesPath, cfg.Namespace, cfg.ModuleMappings)
+	if err != nil {
+		return fmt.Errorf("initializing dev server: %w", err)
+	}
 	dev.HTMLEnabled = true // always show HTML in dev mode
 
 	log.Printf("Dev registry serving from %s on %s", repoRoot, serveAddr)

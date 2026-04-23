@@ -39,8 +39,8 @@ func TestParseInvalidationFormat(t *testing.T) {
 
 func TestWriteInvalidationFile_JSON(t *testing.T) {
 	paths := []string{
-		"/hetzner/server/versions",
-		"/hetzner/server/1.0.0/download",
+		"/hetzner/server/hetzner/versions",
+		"/hetzner/server/hetzner/1.0.0/download",
 	}
 
 	outFile := filepath.Join(t.TempDir(), "invalidation.json")
@@ -68,9 +68,9 @@ func TestWriteInvalidationFile_JSON(t *testing.T) {
 
 func TestWriteInvalidationFile_Txt(t *testing.T) {
 	paths := []string{
-		"/hetzner/server/versions",
-		"/hetzner/server/1.0.0/download",
-		"/aws/ec2/versions",
+		"/hetzner/server/hetzner/versions",
+		"/hetzner/server/hetzner/1.0.0/download",
+		"/aws/ec2/security-group/versions",
 	}
 
 	outFile := filepath.Join(t.TempDir(), "invalidation.txt")
@@ -96,8 +96,8 @@ func TestWriteInvalidationFile_Txt(t *testing.T) {
 
 func TestWriteInvalidationFile_CloudFront(t *testing.T) {
 	paths := []string{
-		"/hetzner/server/versions",
-		"/hetzner/server/1.0.0/download",
+		"/hetzner/server/hetzner/versions",
+		"/hetzner/server/hetzner/1.0.0/download",
 	}
 
 	outFile := filepath.Join(t.TempDir(), "invalidation.json")

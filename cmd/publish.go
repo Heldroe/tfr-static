@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -154,6 +155,11 @@ func runPublish(cmd *cobra.Command, args []string) error {
 			switch {
 			case publishTag != "":
 				info, _ := module.ParseTag(publishTag)
+				regPath, err := resolveRegistryPath(info.ModulePath)
+				if err != nil {
+					return fmt.Errorf("resolving registry path for HTML: %w", err)
+				}
+				info.RegistryPath = regPath
 				moduleTags := allGrouped[info.ModulePath]
 				if err := gen.GenerateForVersion(*info, moduleTags, allGrouped); err != nil {
 					return fmt.Errorf("generating HTML documentation: %w", err)
@@ -200,11 +206,28 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func resolveRegistryPath(dirPath string) (string, error) {
+	regPath, autoMapped, err := module.RegistryPath(dirPath, cfg.Namespace, cfg.ModuleMappings)
+	if err != nil {
+		return "", err
+	}
+	if autoMapped {
+		log.Printf("module %q -> registry path %q", dirPath, regPath)
+	}
+	return regPath, nil
+}
+
 func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string) ([]string, error) {
 	info, err := module.ParseTag(tag)
 	if err != nil {
 		return nil, fmt.Errorf("invalid tag %q: %w", tag, err)
 	}
+
+	regPath, err := resolveRegistryPath(info.ModulePath)
+	if err != nil {
+		return nil, err
+	}
+	info.RegistryPath = regPath
 
 	exists, err := gitRunner.PathExistsAtTag(info.Tag, info.ModulePath)
 	if err != nil {
@@ -214,7 +237,7 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return nil, fmt.Errorf("module path %q does not exist at tag %q", info.ModulePath, info.Tag)
 	}
 
-	paths := registry.InvalidationPathsForNewVersion(info.ModulePath, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
+	paths := registry.InvalidationPathsForNewVersion(info.RegistryPath, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %s version %s\n", info.ModulePath, info.Version)
@@ -233,7 +256,7 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 	if err != nil {
 		return nil, fmt.Errorf("collecting versions: %w", err)
 	}
-	if err := pub.GenerateVersionsJSON(info.ModulePath, versions); err != nil {
+	if err := pub.GenerateVersionsJSON(info.RegistryPath, versions); err != nil {
 		return nil, err
 	}
 
@@ -247,6 +270,11 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 }
 
 func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modulePath string) ([]string, error) {
+	regPath, err := resolveRegistryPath(modulePath)
+	if err != nil {
+		return nil, err
+	}
+
 	tags, err := gitRunner.ListTags()
 	if err != nil {
 		return nil, fmt.Errorf("listing tags: %w", err)
@@ -261,12 +289,16 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 
 	module.SortVersionsAsc(moduleTags)
 
+	for i := range moduleTags {
+		moduleTags[i].RegistryPath = regPath
+	}
+
 	var versions []*semver.Version
 	for _, t := range moduleTags {
 		versions = append(versions, t.Version)
 	}
 
-	paths := registry.InvalidationPathsForModuleRebuild(modulePath, versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
+	paths := registry.InvalidationPathsForModuleRebuild(regPath, versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)
 
 	if dryRun {
 		fmt.Printf("[dry-run] Would publish %d versions of %s:\n", len(moduleTags), modulePath)
@@ -286,7 +318,7 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 		}
 	}
 
-	if err := pub.GenerateVersionsJSON(modulePath, versions); err != nil {
+	if err := pub.GenerateVersionsJSON(regPath, versions); err != nil {
 		return nil, err
 	}
 
@@ -307,6 +339,27 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 
 	grouped := module.GroupTagsByModule(allParsed)
 
+	allDirPaths := make([]string, 0, len(grouped))
+	for modPath := range grouped {
+		allDirPaths = append(allDirPaths, modPath)
+	}
+	if err := module.DetectAmbiguities(allDirPaths, cfg.Namespace, cfg.ModuleMappings); err != nil {
+		return nil, err
+	}
+
+	regPaths := make(map[string]string, len(grouped))
+	for modPath, modTags := range grouped {
+		regPath, err := resolveRegistryPath(modPath)
+		if err != nil {
+			return nil, err
+		}
+		regPaths[modPath] = regPath
+		for i := range modTags {
+			modTags[i].RegistryPath = regPath
+		}
+		grouped[modPath] = modTags
+	}
+
 	moduleVersions := make(map[string][]*semver.Version, len(grouped))
 	for modPath, modTags := range grouped {
 		module.SortVersionsAsc(modTags)
@@ -319,7 +372,7 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 
 	var paths []string
 	for modPath, versions := range moduleVersions {
-		paths = append(paths, registry.InvalidationPathsForModuleRebuild(modPath, versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)...)
+		paths = append(paths, registry.InvalidationPathsForModuleRebuild(regPaths[modPath], versions, cfg.HTML, cfg.HTMLIndex, cfg.InvalidationDirs)...)
 	}
 
 	if dryRun {
@@ -340,7 +393,7 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 				return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 			}
 		}
-		if err := pub.GenerateVersionsJSON(modPath, moduleVersions[modPath]); err != nil {
+		if err := pub.GenerateVersionsJSON(regPaths[modPath], moduleVersions[modPath]); err != nil {
 			return nil, err
 		}
 	}
@@ -378,6 +431,14 @@ func runPublishDev(cmd *cobra.Command) error {
 		return fmt.Errorf("no modules found in repository")
 	}
 
+	dirPaths := make([]string, len(modules))
+	for i, m := range modules {
+		dirPaths[i] = m.Path
+	}
+	if err := module.DetectAmbiguities(dirPaths, cfg.Namespace, cfg.ModuleMappings); err != nil {
+		return err
+	}
+
 	devVersion := semver.MustParse("0.0.0-dev")
 	publisher := registry.NewPublisher(gitRunner, cfg.OutputDir, cfg.BaseURL, cfg.ModulesPath)
 
@@ -389,8 +450,13 @@ func runPublishDev(cmd *cobra.Command) error {
 	}
 
 	for _, m := range modules {
+		regPath, err := resolveRegistryPath(m.Path)
+		if err != nil {
+			return err
+		}
+
 		fmt.Printf("Publishing %s version 0.0.0-dev from working tree...\n", m.Path)
-		if err := publisher.PublishVersionFromWorkTree(repoRoot, m.Path, devVersion); err != nil {
+		if err := publisher.PublishVersionFromWorkTree(repoRoot, m.Path, regPath, devVersion); err != nil {
 			return fmt.Errorf("publishing %s: %w", m.Path, err)
 		}
 
@@ -400,7 +466,7 @@ func runPublishDev(cmd *cobra.Command) error {
 			versions = nil // no tags yet is fine
 		}
 		versions = append(versions, devVersion)
-		if err := publisher.GenerateVersionsJSON(m.Path, versions); err != nil {
+		if err := publisher.GenerateVersionsJSON(regPath, versions); err != nil {
 			return fmt.Errorf("generating versions for %s: %w", m.Path, err)
 		}
 	}
@@ -418,10 +484,15 @@ func runPublishDev(cmd *cobra.Command) error {
 
 		// Add dev entries for published modules
 		for _, m := range modules {
+			regPath, err := resolveRegistryPath(m.Path)
+			if err != nil {
+				return fmt.Errorf("resolving registry path for %s: %w", m.Path, err)
+			}
 			grouped[m.Path] = append(grouped[m.Path], module.TagInfo{
-				Tag:        m.Path + "-0.0.0-dev",
-				ModulePath: m.Path,
-				Version:    devVersion,
+				Tag:          m.Path + "-0.0.0-dev",
+				ModulePath:   m.Path,
+				RegistryPath: regPath,
+				Version:      devVersion,
 			})
 		}
 
@@ -475,7 +546,20 @@ func groupedFromGit(gitRunner *git.Runner) map[string][]module.TagInfo {
 		return nil
 	}
 	allParsed := module.ParseAllTags(tags)
-	return module.GroupTagsByModule(allParsed)
+	grouped := module.GroupTagsByModule(allParsed)
+	for modPath, modTags := range grouped {
+		regPath, err := resolveRegistryPath(modPath)
+		if err != nil {
+			log.Printf("skipping module %q in HTML: %v", modPath, err)
+			delete(grouped, modPath)
+			continue
+		}
+		for i := range modTags {
+			modTags[i].RegistryPath = regPath
+		}
+		grouped[modPath] = modTags
+	}
+	return grouped
 }
 
 func collectModuleVersions(gitRunner *git.Runner, modulePath string) ([]*semver.Version, error) {

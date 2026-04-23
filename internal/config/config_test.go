@@ -24,6 +24,7 @@ invalidation_base_url  = "https://cdn.example.com"
 invalidation_url_encode = true
 invalidation_dirs       = true
 html_base               = "templates/base.html"
+namespace               = "infra"
 `
 	os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644)
 
@@ -78,6 +79,9 @@ html_base               = "templates/base.html"
 	}
 	if fc.HTMLBase == nil || *fc.HTMLBase != "templates/base.html" {
 		t.Errorf("HTMLBase = %v", fc.HTMLBase)
+	}
+	if fc.Namespace == nil || *fc.Namespace != "infra" {
+		t.Errorf("Namespace = %v", fc.Namespace)
 	}
 }
 
@@ -139,6 +143,45 @@ unknown_key = "value"
 	_, err := LoadFileConfig(dir)
 	if err == nil {
 		t.Error("expected error for unknown field")
+	}
+}
+
+func TestLoadFileConfig_ModuleBlocks(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+base_url = "https://registry.example.com"
+
+module "hetzner/server" {
+  registry_path = "hetzner/server/hetzner"
+}
+
+module "aws/ec2" {
+  registry_path = "aws/ec2/aws"
+}
+`
+	os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644)
+
+	fc, err := LoadFileConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if len(fc.Modules) != 2 {
+		t.Fatalf("expected 2 module blocks, got %d", len(fc.Modules))
+	}
+	if fc.Modules[0].DirPath != "hetzner/server" {
+		t.Errorf("Modules[0].DirPath = %q", fc.Modules[0].DirPath)
+	}
+	if fc.Modules[0].RegistryPath != "hetzner/server/hetzner" {
+		t.Errorf("Modules[0].RegistryPath = %q", fc.Modules[0].RegistryPath)
+	}
+	if fc.Modules[1].DirPath != "aws/ec2" {
+		t.Errorf("Modules[1].DirPath = %q", fc.Modules[1].DirPath)
+	}
+	if fc.Modules[1].RegistryPath != "aws/ec2/aws" {
+		t.Errorf("Modules[1].RegistryPath = %q", fc.Modules[1].RegistryPath)
 	}
 }
 

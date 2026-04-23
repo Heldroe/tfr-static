@@ -24,30 +24,78 @@ import (
 // regardless of which version was requested. This lets developers swap the
 // registry domain to localhost and test uncommitted changes without tagging.
 type DevServer struct {
-	Git         *git.Runner
-	RepoRoot    string
-	ModulesPath string
-	HTMLEnabled bool
-	baseTmpl    *template.Template
+	Git            *git.Runner
+	RepoRoot       string
+	ModulesPath    string
+	HTMLEnabled    bool
+	baseTmpl       *template.Template
+	namespace      string
+	moduleMappings map[string]string
+	// regToDirPath maps 3-segment registry paths back to directory paths
+	regToDirPath map[string]string
+	// dirToRegPath maps directory paths to 3-segment registry paths
+	dirToRegPath map[string]string
 }
 
 // NewDevServer creates a DevServer.
-func NewDevServer(gitRunner *git.Runner, repoRoot, modulesPath string) *DevServer {
-	if modulesPath == "" {
-		modulesPath = "/"
+func NewDevServer(gitRunner *git.Runner, repoRoot, modulesPath, namespace string, moduleMappings map[string]string) (*DevServer, error) {
+	modulesPath = normalizeModulesPath(modulesPath)
+	if moduleMappings == nil {
+		moduleMappings = map[string]string{}
 	}
-	if !strings.HasPrefix(modulesPath, "/") {
-		modulesPath = "/" + modulesPath
+
+	s := &DevServer{
+		Git:            gitRunner,
+		RepoRoot:       repoRoot,
+		ModulesPath:    modulesPath,
+		baseTmpl:       template.Must(template.New("base").Parse(defaultBaseTemplate)),
+		namespace:      namespace,
+		moduleMappings: moduleMappings,
+		regToDirPath:   make(map[string]string),
+		dirToRegPath:   make(map[string]string),
 	}
-	if !strings.HasSuffix(modulesPath, "/") {
-		modulesPath = modulesPath + "/"
+	if err := s.buildPathMaps(); err != nil {
+		return nil, err
 	}
-	return &DevServer{
-		Git:         gitRunner,
-		RepoRoot:    repoRoot,
-		ModulesPath: modulesPath,
-		baseTmpl:    template.Must(template.New("base").Parse(defaultBaseTemplate)),
+	return s, nil
+}
+
+func (s *DevServer) buildPathMaps() error {
+	modules, err := module.DiscoverModules(s.RepoRoot)
+	if err != nil {
+		return fmt.Errorf("discovering modules: %w", err)
 	}
+
+	dirPaths := make([]string, len(modules))
+	for i, m := range modules {
+		dirPaths[i] = m.Path
+	}
+	if err := module.DetectAmbiguities(dirPaths, s.namespace, s.moduleMappings); err != nil {
+		return err
+	}
+
+	for _, m := range modules {
+		regPath, _, err := module.RegistryPath(m.Path, s.namespace, s.moduleMappings)
+		if err != nil {
+			log.Printf("[dev] skipping module %q: %v", m.Path, err)
+			continue
+		}
+		s.regToDirPath[regPath] = m.Path
+		s.dirToRegPath[m.Path] = regPath
+	}
+	return nil
+}
+
+// resolveDirPath converts a registry path from a URL to the filesystem directory path.
+// If the path is already a known directory path, it returns it directly.
+func (s *DevServer) resolveDirPath(registryPath string) (string, bool) {
+	if dirPath, ok := s.regToDirPath[registryPath]; ok {
+		return dirPath, true
+	}
+	if s.moduleExists(registryPath) {
+		return registryPath, true
+	}
+	return "", false
 }
 
 // Handler returns an http.Handler that implements the dev registry.
@@ -86,18 +134,18 @@ func (s *DevServer) handleModule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path string) {
-	modulePath := strings.TrimSuffix(path, "/versions")
+	registryPath := strings.TrimSuffix(path, "/versions")
 
-	if !s.moduleExists(modulePath) {
-		log.Printf("[dev] module %q not found in working tree", modulePath)
+	dirPath, ok := s.resolveDirPath(registryPath)
+	if !ok {
+		log.Printf("[dev] module %q not found in working tree", registryPath)
 		http.NotFound(w, r)
 		return
 	}
 
-	// Collect real versions from tags
 	tags, _ := s.Git.ListTags()
 	allParsed := module.ParseAllTags(tags)
-	moduleTags := module.FilterTagsForModule(allParsed, modulePath)
+	moduleTags := module.FilterTagsForModule(allParsed, dirPath)
 
 	var entries []VersionEntry
 	for _, t := range moduleTags {
@@ -105,8 +153,6 @@ func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path 
 	}
 
 	// Always include a dev version so new modules without tags still work.
-	// Use 0.0.0-dev which is lower than any real version, and also add
-	// a very high version so "latest" constraints resolve to it.
 	entries = append(entries,
 		VersionEntry{Version: "0.0.0-dev"},
 		VersionEntry{Version: "99999.0.0-dev"},
@@ -119,31 +165,30 @@ func (s *DevServer) handleVersions(w http.ResponseWriter, r *http.Request, path 
 }
 
 func (s *DevServer) handleDownload(w http.ResponseWriter, r *http.Request, path string) {
-	// path: {module}/{version}/download
-	// Strip /download, then split off the version
+	// path: {registry_path}/{version}/download
 	withoutDownload := strings.TrimSuffix(path, "/download")
 	lastSlash := strings.LastIndex(withoutDownload, "/")
 	if lastSlash == -1 {
 		http.NotFound(w, r)
 		return
 	}
-	modulePath := withoutDownload[:lastSlash]
+	registryPath := withoutDownload[:lastSlash]
 	version := withoutDownload[lastSlash+1:]
 
-	if !s.moduleExists(modulePath) {
-		log.Printf("[dev] module %q not found in working tree", modulePath)
+	if _, ok := s.resolveDirPath(registryPath); !ok {
+		log.Printf("[dev] module %q not found in working tree", registryPath)
 		http.NotFound(w, r)
 		return
 	}
 
-	// Point to the archive endpoint on this same server
+	// Point to the archive endpoint on this same server (URL uses registry path)
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
 	host := r.Host
-	archiveFile := archiveNameFromParts(modulePath, version)
-	archiveURL := fmt.Sprintf("%s://%s%s%s/%s/%s", scheme, host, s.ModulesPath, modulePath, version, archiveFile)
+	archiveFile := archiveNameFromParts(registryPath, version)
+	archiveURL := fmt.Sprintf("%s://%s%s%s/%s/%s", scheme, host, s.ModulesPath, registryPath, version, archiveFile)
 
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -157,34 +202,34 @@ func (s *DevServer) handleDownload(w http.ResponseWriter, r *http.Request, path 
 }
 
 func (s *DevServer) handleArchive(w http.ResponseWriter, r *http.Request, path string) {
-	// path: {module}/{version}/{archive}.tar.gz
-	// We need to extract the module path. The archive filename is the last segment.
+	// path: {registry_path}/{version}/{archive}.tar.gz
 	lastSlash := strings.LastIndex(path, "/")
 	if lastSlash == -1 {
 		http.NotFound(w, r)
 		return
 	}
-	dirPath := path[:lastSlash]
-	// dirPath is {module}/{version}, strip the version
-	versionSlash := strings.LastIndex(dirPath, "/")
+	withoutFile := path[:lastSlash]
+	// withoutFile is {registry_path}/{version}, strip the version
+	versionSlash := strings.LastIndex(withoutFile, "/")
 	if versionSlash == -1 {
 		http.NotFound(w, r)
 		return
 	}
-	modulePath := dirPath[:versionSlash]
+	registryPath := withoutFile[:versionSlash]
 
-	if !s.moduleExists(modulePath) {
-		log.Printf("[dev] module %q not found in working tree", modulePath)
+	dirPath, ok := s.resolveDirPath(registryPath)
+	if !ok {
+		log.Printf("[dev] module %q not found in working tree", registryPath)
 		http.NotFound(w, r)
 		return
 	}
 
-	log.Printf("[dev] building archive for %s from working tree", modulePath)
+	log.Printf("[dev] building archive for %s from working tree", dirPath)
 
-	descriptiveName := descriptiveArchiveNameFromParts(modulePath, dirPath[versionSlash+1:])
+	descriptiveName := descriptiveArchiveNameFromParts(registryPath, withoutFile[versionSlash+1:])
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, descriptiveName))
 	w.Header().Set("Content-Type", "application/gzip")
-	if err := buildArchiveFromWorkTree(s.RepoRoot, modulePath, w); err != nil {
+	if err := buildArchiveFromWorkTree(s.RepoRoot, dirPath, w); err != nil {
 		log.Printf("[dev] error building archive: %v", err)
 		http.Error(w, "failed to build archive", http.StatusInternalServerError)
 		return
@@ -198,23 +243,19 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 
 	// Root page: list all modules
 	if path == "" {
-		modules, err := module.DiscoverModules(s.RepoRoot)
-		if err != nil {
-			http.Error(w, "failed to discover modules", http.StatusInternalServerError)
-			return
-		}
+		tags, _ := s.Git.ListTags()
+		allParsed := module.ParseAllTags(tags)
+
 		var entries []rootModuleEntry
-		for _, m := range modules {
-			tags, _ := s.Git.ListTags()
-			allParsed := module.ParseAllTags(tags)
-			moduleTags := module.FilterTagsForModule(allParsed, m.Path)
+		for dirPath, regPath := range s.dirToRegPath {
+			moduleTags := module.FilterTagsForModule(allParsed, dirPath)
 			latest := module.LatestVersion(moduleTags)
 			latestStr := "0.0.0-dev"
 			if latest != nil {
 				latestStr = latest.Version.Original()
 			}
 			entries = append(entries, rootModuleEntry{
-				Path:          m.Path,
+				Path:          regPath,
 				LatestVersion: latestStr,
 				VersionCount:  len(moduleTags) + 1, // +1 for dev
 			})
@@ -229,8 +270,8 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 		possibleModule := path[:lastSlash]
 		possibleVersion := path[lastSlash+1:]
 		if _, err := semver.StrictNewVersion(possibleVersion); err == nil {
-			if s.moduleExists(possibleModule) {
-				readmeHTML := renderMarkdown(reader(possibleModule, ""))
+			if dirPath, ok := s.resolveDirPath(possibleModule); ok {
+				readmeHTML := renderMarkdown(reader(dirPath, ""))
 				archiveFile := "module.tar.gz"
 				data := versionPageData{
 					ModulePath:          possibleModule,
@@ -246,10 +287,10 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 	}
 
 	// Module page
-	if s.moduleExists(path) {
+	if dirPath, ok := s.resolveDirPath(path); ok {
 		tags, _ := s.Git.ListTags()
 		allParsed := module.ParseAllTags(tags)
-		moduleTags := module.FilterTagsForModule(allParsed, path)
+		moduleTags := module.FilterTagsForModule(allParsed, dirPath)
 		module.SortVersionsDesc(moduleTags)
 
 		var versions []string
@@ -258,7 +299,7 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 		}
 		versions = append(versions, "0.0.0-dev")
 
-		readmeHTML := renderMarkdown(reader(path, ""))
+		readmeHTML := renderMarkdown(reader(dirPath, ""))
 		data := modulePageData{
 			ModulePath: path,
 			Versions:   versions,

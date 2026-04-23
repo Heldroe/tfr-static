@@ -17,9 +17,18 @@ type Module struct {
 
 // TagInfo holds parsed information from a git tag.
 type TagInfo struct {
-	Tag        string
-	ModulePath string
-	Version    *semver.Version
+	Tag          string
+	ModulePath   string          // Directory path in the repo (e.g. "hetzner/server")
+	RegistryPath string          // 3-segment path for the registry protocol (e.g. "hetzner/server/hetzner")
+	Version      *semver.Version
+}
+
+// EffectiveRegistryPath returns RegistryPath if set, otherwise falls back to ModulePath.
+func (t TagInfo) EffectiveRegistryPath() string {
+	if t.RegistryPath != "" {
+		return t.RegistryPath
+	}
+	return t.ModulePath
 }
 
 // ParseTag parses a git tag into module path and version.
@@ -202,4 +211,71 @@ func ParseAllTags(rawTags []string) []TagInfo {
 		result = append(result, *info)
 	}
 	return result
+}
+
+// RegistryPath converts a directory path to a 3-segment registry path
+// (namespace/name/system) as required by the Terraform registry protocol.
+//
+// If a mapping exists for dirPath, it is used (autoMapped=false).
+// Otherwise the path is derived as: namespace/{parts[1:] joined with -}/{parts[0]}.
+// The first directory segment is treated as the provider/system, the rest form the name.
+func RegistryPath(dirPath string, namespace string, mappings map[string]string) (registryPath string, autoMapped bool, err error) {
+	if mapped, ok := mappings[dirPath]; ok {
+		if err := ValidateRegistryPath(mapped); err != nil {
+			return "", false, fmt.Errorf("invalid mapping for %q: %w", dirPath, err)
+		}
+		return mapped, false, nil
+	}
+
+	parts := strings.Split(dirPath, "/")
+	if len(parts) < 2 {
+		return "", false, fmt.Errorf("module path %q needs at least 2 directory segments (e.g. provider/name); add an explicit mapping in .tfr-static.hcl to override", dirPath)
+	}
+
+	system := parts[0]
+	name := strings.Join(parts[1:], "-")
+	return namespace + "/" + name + "/" + system, true, nil
+}
+
+// DetectAmbiguities checks that no two directory paths produce the same
+// auto-derived registry path. Explicitly mapped paths are excluded.
+func DetectAmbiguities(dirPaths []string, namespace string, mappings map[string]string) error {
+	seen := make(map[string][]string)
+	for _, dp := range dirPaths {
+		if _, ok := mappings[dp]; ok {
+			continue
+		}
+		rp, _, err := RegistryPath(dp, namespace, mappings)
+		if err != nil {
+			continue
+		}
+		seen[rp] = append(seen[rp], dp)
+	}
+
+	var collisions []string
+	for rp, dirs := range seen {
+		if len(dirs) > 1 {
+			collisions = append(collisions, fmt.Sprintf(
+				"registry path %q is produced by: %s", rp, strings.Join(dirs, ", ")))
+		}
+	}
+	if len(collisions) > 0 {
+		sort.Strings(collisions)
+		return fmt.Errorf("ambiguous registry paths detected:\n  %s\n\nUse explicit module mappings in .tfr-static.hcl to resolve", strings.Join(collisions, "\n  "))
+	}
+	return nil
+}
+
+// ValidateRegistryPath checks that a path has exactly 3 non-empty segments.
+func ValidateRegistryPath(path string) error {
+	parts := strings.Split(path, "/")
+	if len(parts) != 3 {
+		return fmt.Errorf("registry path %q has %d segment(s), want 3 (namespace/name/system)", path, len(parts))
+	}
+	for _, p := range parts {
+		if p == "" {
+			return fmt.Errorf("registry path %q contains an empty segment", path)
+		}
+	}
+	return nil
 }

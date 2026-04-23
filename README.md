@@ -20,18 +20,52 @@ For each published version, the following files are generated:
 
 | File | Purpose |
 |---|---|
-| `{module}/{version}/module.tar.gz` | The module archive |
-| `{module}/{version}/download` | HTML page with `<meta name="terraform-get">` pointing to the archive |
-| `{module}/versions` | Version listing following the registry protocol |
+| `{namespace}/{name}/{system}/{version}/module.tar.gz` | The module archive |
+| `{namespace}/{name}/{system}/{version}/download` | HTML page with `<meta name="terraform-get">` pointing to the archive |
+| `{namespace}/{name}/{system}/versions` | Version listing following the registry protocol |
 | `.well-known/terraform.json` | [Service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery) document |
+
+## Registry paths
+
+The Terraform Module Registry Protocol requires all module paths to have exactly 3 segments: `namespace/name/system`. Directory paths are automatically mapped to registry paths using this convention:
+
+| Part | Source | Example |
+|---|---|---|
+| **namespace** | Configurable (default `modules`) | `modules` |
+| **name** | Directory segments after the first, joined with `-` | `ec2-security-group` |
+| **system** | First directory segment (the provider) | `aws` |
+
+Given this directory structure:
+
+```
+aws/ec2/instance        -> modules/ec2-instance/aws
+aws/ec2/security-group  -> modules/ec2-security-group/aws
+aws/ec2/eip/foo         -> modules/ec2-eip-foo/aws
+aws/rds/db              -> modules/rds-db/aws
+hetzner/server          -> modules/server/hetzner
+```
+
+**Ambiguity detection:** If two directory paths produce the same registry path (e.g. `aws/foo-bar/baz` and `aws/foo/bar-baz` both produce `modules/foo-bar-baz/aws`), the tool errors before publishing and suggests adding explicit mappings.
+
+**Custom namespace:** Set via `--namespace`, `TFR_NAMESPACE`, or `namespace` in `.tfr-static.hcl`. Default: `modules`.
+
+**Explicit overrides:** Add `module` blocks to `.tfr-static.hcl` to bypass auto-derivation:
+
+```hcl
+module "hetzner/server" {
+  registry_path = "custom/server/hetzner"
+}
+```
+
+**Important:** This only affects publishing — tags always use directory paths (e.g. `hetzner/server-1.0.0`), and all tagging logic remains unchanged.
 
 ## Usage with Terraform
 
-Once the generated files are uploaded and served at a base URL, modules can be consumed as:
+Once the generated files are uploaded and served at a base URL, modules can be consumed using their **registry path** (3-segment):
 
 ```hcl
 module "server" {
-  source  = "registry.example.com/hetzner/server"
+  source  = "registry.example.com/modules/server/hetzner"
   version = "1.0.0"
 }
 ```
@@ -75,6 +109,12 @@ invalidation_base_url   = "https://cdn.example.com"
 invalidation_url_encode = false
 invalidation_dirs       = false
 html_base               = "templates/base.html"
+namespace               = "modules"
+
+# Optional: override auto-derived registry paths for specific modules
+module "hetzner/server" {
+  registry_path = "custom/server/hetzner"
+}
 ```
 
 All fields are optional. Unknown fields will cause an error to catch typos early.
@@ -87,6 +127,7 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `--main-branch` | Expected main branch for tagging | `main` |
 | `--output-dir` | Output directory for generated files | `target` |
 | `--modules-path` | Path prefix for `modules.v1` in service discovery | `/` |
+| `--namespace` | Default namespace for auto-derived registry paths | `modules` |
 | `--repo` | Path to the git repository | `.` |
 
 ### Environment variables
@@ -97,6 +138,7 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_MAIN_BRANCH` | `--main-branch` |
 | `TFR_OUTPUT_DIR` | `--output-dir` |
 | `TFR_MODULES_PATH` | `--modules-path` |
+| `TFR_NAMESPACE` | `--namespace` |
 | `TFR_REPO_PATH` | `--repo` |
 | `TFR_HTML` | `--html` |
 | `TFR_HTML_INDEX` | `--html-index` |
@@ -189,15 +231,15 @@ The `--invalidation-file` flag writes all CDN paths that need cache invalidation
 
 **`txt`** (default) — one path per line:
 ```
-/hetzner/server/versions
-/hetzner/server/1.0.0/download
+/modules/server/hetzner/versions
+/modules/server/hetzner/1.0.0/download
 ```
 
 **`json`** — a JSON array of paths:
 ```json
 [
-  "/hetzner/server/versions",
-  "/hetzner/server/1.0.0/download"
+  "/modules/server/hetzner/versions",
+  "/modules/server/hetzner/1.0.0/download"
 ]
 ```
 
@@ -207,8 +249,8 @@ The `--invalidation-file` flag writes all CDN paths that need cache invalidation
   "Paths": {
     "Quantity": 2,
     "Items": [
-      "/hetzner/server/versions",
-      "/hetzner/server/1.0.0/download"
+      "/modules/server/hetzner/versions",
+      "/modules/server/hetzner/1.0.0/download"
     ]
   },
   "CallerReference": "tfr-static-1711296000"
@@ -239,13 +281,14 @@ This creates `index.html` pages at each level of the output:
 ```
 target/
 ├── index.html                          (root: links to all modules)
-├── hetzner/
+├── modules/
 │   └── server/
-│       ├── index.html                  (module: lists versions, shows README)
-│       ├── 1.0.0/
-│       │   └── index.html              (version: download link, shows README)
-│       └── 0.1.0/
-│           └── index.html
+│       └── hetzner/
+│           ├── index.html              (module: lists versions, shows README)
+│           ├── 1.0.0/
+│           │   └── index.html          (version: download link, shows README)
+│           └── 0.1.0/
+│               └── index.html
 ```
 
 If a module directory contains a `README.md` next to its `.tf` files, the README is rendered as HTML on both the module page (from the latest version) and each version page (from that version's tag).
@@ -378,10 +421,11 @@ tfr-static serve --dev
 
 In dev mode:
 - `/.well-known/terraform.json` returns the service discovery document
-- `/{module}/versions` returns all real tagged versions plus synthetic dev versions (`0.0.0-dev` and `99999.0.0-dev`) so that any version constraint can match
-- `/{module}/{version}/download` always points to an on-the-fly archive regardless of the requested version
+- `/{namespace}/{name}/{system}/versions` returns all real tagged versions plus synthetic dev versions (`0.0.0-dev` and `99999.0.0-dev`) so that any version constraint can match
+- `/{namespace}/{name}/{system}/{version}/download` always points to an on-the-fly archive regardless of the requested version
 - Archives are built from the filesystem (not from git), so uncommitted changes are included
-- Browsable HTML pages are served at `/`, `/{module}/`, and `/{module}/{version}/` with README rendering
+- Browsable HTML pages are served at `/`, `/{namespace}/{name}/{system}/`, and `/{namespace}/{name}/{system}/{version}/` with README rendering
+- Directory paths are automatically mapped to 3-segment registry paths (see [Registry paths](#registry-paths))
 
 | Flag | Description | Default |
 |---|---|---|
@@ -390,19 +434,22 @@ In dev mode:
 
 ## Generated output structure
 
+Output directories use 3-segment registry paths (see [Registry paths](#registry-paths)):
+
 ```
 target/
 ├── .well-known/
 │   └── terraform.json
-└── hetzner/
+└── modules/
     └── server/
-        ├── versions
-        ├── 0.1.0/
-        │   ├── download
-        │   └── module.tar.gz
-        └── 1.0.0/
-            ├── download
-            └── module.tar.gz
+        └── hetzner/
+            ├── versions
+            ├── 0.1.0/
+            │   ├── download
+            │   └── module.tar.gz
+            └── 1.0.0/
+                ├── download
+                └── module.tar.gz
 ```
 
 The `.well-known/terraform.json` file implements [Terraform service discovery](https://developer.hashicorp.com/terraform/internals/remote-service-discovery), telling Terraform where the module API lives:
@@ -418,7 +465,7 @@ If your modules are served from a subpath (e.g. behind a reverse proxy at `/v1/m
 The `download` file is an HTML page that Terraform uses for module source resolution:
 
 ```html
-<meta name="terraform-get" content="https://registry.example.com/hetzner/server/1.0.0/module.tar.gz" />
+<meta name="terraform-get" content="https://registry.example.com/modules/server/hetzner/1.0.0/module.tar.gz" />
 ```
 
 The `versions` file follows the [module versions protocol](https://developer.hashicorp.com/terraform/internals/module-registry-protocol#list-available-versions-for-a-module):

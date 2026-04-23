@@ -59,9 +59,18 @@ func setupDevTestRepo(t *testing.T) (repoPath string, gitRunner *git.Runner) {
 	return tmpDir, git.NewRunner(tmpDir)
 }
 
+func mustNewDevServer(t *testing.T, gitRunner *git.Runner, repoRoot, modulesPath, namespace string, mappings map[string]string) *DevServer {
+	t.Helper()
+	dev, err := NewDevServer(gitRunner, repoRoot, modulesPath, namespace, mappings)
+	if err != nil {
+		t.Fatalf("NewDevServer: %v", err)
+	}
+	return dev
+}
+
 func TestDevServer_ServiceDiscovery(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
@@ -84,7 +93,7 @@ func TestDevServer_ServiceDiscovery(t *testing.T) {
 
 func TestDevServer_ServiceDiscovery_CustomPath(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/v1/modules")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/v1/modules", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
@@ -100,11 +109,11 @@ func TestDevServer_ServiceDiscovery_CustomPath(t *testing.T) {
 
 func TestDevServer_Versions(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/versions")
+	resp, err := http.Get(srv.URL + "/modules/server/hetzner/versions")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,12 +149,12 @@ func TestDevServer_Versions(t *testing.T) {
 
 func TestDevServer_Versions_NoTags(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
 	// aws/ec2/security-group has no tags
-	resp, _ := http.Get(srv.URL + "/aws/ec2/security-group/versions")
+	resp, _ := http.Get(srv.URL + "/modules/ec2-security-group/aws/versions")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -163,7 +172,7 @@ func TestDevServer_Versions_NoTags(t *testing.T) {
 
 func TestDevServer_Versions_NonExistentModule(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
@@ -177,11 +186,11 @@ func TestDevServer_Versions_NonExistentModule(t *testing.T) {
 
 func TestDevServer_Download(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/1.0.0/download")
+	resp, err := http.Get(srv.URL + "/modules/server/hetzner/1.0.0/download")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,12 +213,12 @@ func TestDevServer_Download(t *testing.T) {
 
 func TestDevServer_Download_AnyVersion(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
 	// Should work even for a version that doesn't exist as a tag
-	resp, _ := http.Get(srv.URL + "/hetzner/server/99.0.0/download")
+	resp, _ := http.Get(srv.URL + "/modules/server/hetzner/99.0.0/download")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -219,11 +228,11 @@ func TestDevServer_Download_AnyVersion(t *testing.T) {
 
 func TestDevServer_Archive(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/1.0.0/module.tar.gz")
+	resp, err := http.Get(srv.URL + "/modules/server/hetzner/1.0.0/module.tar.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,8 +248,8 @@ func TestDevServer_Archive(t *testing.T) {
 
 	// Verify Content-Disposition header with descriptive filename
 	cd := resp.Header.Get("Content-Disposition")
-	if cd != `attachment; filename="hetzner-server-1.0.0.tar.gz"` {
-		t.Errorf("Content-Disposition = %q, want %q", cd, `attachment; filename="hetzner-server-1.0.0.tar.gz"`)
+	if cd != `attachment; filename="modules-server-hetzner-1.0.0.tar.gz"` {
+		t.Errorf("Content-Disposition = %q, want %q", cd, `attachment; filename="modules-server-hetzner-1.0.0.tar.gz"`)
 	}
 
 	// Verify it's a valid tar.gz and contains the expected file
@@ -276,7 +285,7 @@ func TestDevServer_Archive(t *testing.T) {
 
 func TestDevServer_Archive_ServesWorkingTree(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
@@ -284,7 +293,7 @@ func TestDevServer_Archive_ServesWorkingTree(t *testing.T) {
 	tfPath := filepath.Join(repoPath, "hetzner", "server", "main.tf")
 	os.WriteFile(tfPath, []byte(`resource "hetzner_server" "this" { name = "modified" }`), 0o644)
 
-	resp, _ := http.Get(srv.URL + "/hetzner/server/1.0.0/module.tar.gz")
+	resp, _ := http.Get(srv.URL + "/modules/server/hetzner/1.0.0/module.tar.gz")
 	defer resp.Body.Close()
 
 	gr, _ := gzip.NewReader(resp.Body)
@@ -312,7 +321,7 @@ func TestDevServer_Archive_ServesWorkingTree(t *testing.T) {
 
 func TestDevServer_Archive_NonExistentModule(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
@@ -326,7 +335,7 @@ func TestDevServer_Archive_NonExistentModule(t *testing.T) {
 
 func TestDevServer_FullFlow(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
@@ -337,7 +346,7 @@ func TestDevServer_FullFlow(t *testing.T) {
 	resp.Body.Close()
 
 	// 2. List versions
-	resp, _ = http.Get(srv.URL + sd.ModulesV1 + "hetzner/server/versions")
+	resp, _ = http.Get(srv.URL + sd.ModulesV1 + "modules/server/hetzner/versions")
 	var mv ModuleVersions
 	json.NewDecoder(resp.Body).Decode(&mv)
 	resp.Body.Close()
@@ -350,7 +359,7 @@ func TestDevServer_FullFlow(t *testing.T) {
 	version := mv.Modules[0].Versions[0].Version
 
 	// 3. Get download page
-	resp, _ = http.Get(srv.URL + sd.ModulesV1 + "hetzner/server/" + version + "/download")
+	resp, _ = http.Get(srv.URL + sd.ModulesV1 + "modules/server/hetzner/" + version + "/download")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 
@@ -395,7 +404,7 @@ func extractTerraformGetURL(html string) string {
 
 func TestDevServer_HTML_RootPage(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	dev.HTMLEnabled = true
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
@@ -415,8 +424,8 @@ func TestDevServer_HTML_RootPage(t *testing.T) {
 	if !strings.Contains(content, "Terraform Module Registry") {
 		t.Error("root page should contain registry title")
 	}
-	if !strings.Contains(content, "hetzner/server") {
-		t.Error("root page should list hetzner/server module")
+	if !strings.Contains(content, "modules/server/hetzner") {
+		t.Error("root page should list hetzner/server/hetzner module")
 	}
 }
 
@@ -426,12 +435,12 @@ func TestDevServer_HTML_ModulePage(t *testing.T) {
 	// Add a README to the module
 	os.WriteFile(filepath.Join(repoPath, "hetzner", "server", "README.md"), []byte("# Server Module"), 0o644)
 
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	dev.HTMLEnabled = true
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/")
+	resp, err := http.Get(srv.URL + "/modules/server/hetzner/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +452,7 @@ func TestDevServer_HTML_ModulePage(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	content := string(body)
-	if !strings.Contains(content, "hetzner/server") {
+	if !strings.Contains(content, "modules/server/hetzner") {
 		t.Error("module page should contain module path")
 	}
 	if !strings.Contains(content, "Server Module") {
@@ -456,12 +465,12 @@ func TestDevServer_HTML_ModulePage(t *testing.T) {
 
 func TestDevServer_HTML_VersionPage(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	dev.HTMLEnabled = true
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/hetzner/server/1.0.0/")
+	resp, err := http.Get(srv.URL + "/modules/server/hetzner/1.0.0/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +482,7 @@ func TestDevServer_HTML_VersionPage(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	content := string(body)
-	if !strings.Contains(content, "hetzner/server") {
+	if !strings.Contains(content, "modules/server/hetzner") {
 		t.Error("version page should contain module path")
 	}
 	if !strings.Contains(content, "1.0.0") {
@@ -483,7 +492,7 @@ func TestDevServer_HTML_VersionPage(t *testing.T) {
 
 func TestDevServer_HTML_Disabled(t *testing.T) {
 	repoPath, gitRunner := setupDevTestRepo(t)
-	dev := NewDevServer(gitRunner, repoPath, "/")
+	dev := mustNewDevServer(t, gitRunner, repoPath, "/", "modules", nil)
 	dev.HTMLEnabled = false
 	srv := httptest.NewServer(dev.Handler())
 	defer srv.Close()

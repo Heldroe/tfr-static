@@ -371,3 +371,192 @@ func TestFilterTagsForModule(t *testing.T) {
 		t.Errorf("expected 0 tags for partial match, got %d", len(result))
 	}
 }
+
+func TestRegistryPath(t *testing.T) {
+	tests := []struct {
+		name      string
+		dirPath   string
+		namespace string
+		mappings  map[string]string
+		want      string
+		wantAuto  bool
+		wantErr   bool
+	}{
+		{
+			name:      "2 segments",
+			dirPath:   "hetzner/server",
+			namespace: "modules",
+			want:      "modules/server/hetzner",
+			wantAuto:  true,
+		},
+		{
+			name:      "3 segments",
+			dirPath:   "aws/ec2/instance",
+			namespace: "modules",
+			want:      "modules/ec2-instance/aws",
+			wantAuto:  true,
+		},
+		{
+			name:      "4 segments",
+			dirPath:   "aws/ec2/eip/foo",
+			namespace: "modules",
+			want:      "modules/ec2-eip-foo/aws",
+			wantAuto:  true,
+		},
+		{
+			name:      "segment with dashes preserved",
+			dirPath:   "aws/ec2/security-group",
+			namespace: "modules",
+			want:      "modules/ec2-security-group/aws",
+			wantAuto:  true,
+		},
+		{
+			name:      "custom namespace",
+			dirPath:   "aws/ec2/instance",
+			namespace: "infra",
+			want:      "infra/ec2-instance/aws",
+			wantAuto:  true,
+		},
+		{
+			name:      "1 segment error",
+			dirPath:   "mymod",
+			namespace: "modules",
+			wantErr:   true,
+		},
+		{
+			name:      "empty string error",
+			dirPath:   "",
+			namespace: "modules",
+			wantErr:   true,
+		},
+		{
+			name:      "mapping overrides auto",
+			dirPath:   "hetzner/server",
+			namespace: "modules",
+			mappings:  map[string]string{"hetzner/server": "custom/server/hetzner"},
+			want:      "custom/server/hetzner",
+			wantAuto:  false,
+		},
+		{
+			name:      "invalid mapping (not 3 segments)",
+			dirPath:   "hetzner/server",
+			namespace: "modules",
+			mappings:  map[string]string{"hetzner/server": "only/two"},
+			wantErr:   true,
+		},
+		{
+			name:      "unmatched mapping falls through",
+			dirPath:   "hetzner/server",
+			namespace: "modules",
+			mappings:  map[string]string{"other/mod": "other/mod/other"},
+			want:      "modules/server/hetzner",
+			wantAuto:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mappings := tt.mappings
+			if mappings == nil {
+				mappings = map[string]string{}
+			}
+			got, autoMapped, err := RegistryPath(tt.dirPath, tt.namespace, mappings)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("RegistryPath(%q) expected error, got %q", tt.dirPath, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RegistryPath(%q) unexpected error: %v", tt.dirPath, err)
+			}
+			if got != tt.want {
+				t.Errorf("RegistryPath(%q) = %q, want %q", tt.dirPath, got, tt.want)
+			}
+			if autoMapped != tt.wantAuto {
+				t.Errorf("RegistryPath(%q) autoMapped = %v, want %v", tt.dirPath, autoMapped, tt.wantAuto)
+			}
+		})
+	}
+}
+
+func TestDetectAmbiguities(t *testing.T) {
+	tests := []struct {
+		name      string
+		dirPaths  []string
+		namespace string
+		mappings  map[string]string
+		wantErr   bool
+	}{
+		{
+			name:      "no ambiguity",
+			dirPaths:  []string{"aws/ec2/instance", "aws/rds/db", "hetzner/server"},
+			namespace: "modules",
+			wantErr:   false,
+		},
+		{
+			name:      "ambiguous dash collision",
+			dirPaths:  []string{"aws/foo-bar/baz", "aws/foo/bar-baz"},
+			namespace: "modules",
+			wantErr:   true,
+		},
+		{
+			name:      "explicit mapping resolves ambiguity",
+			dirPaths:  []string{"aws/foo-bar/baz", "aws/foo/bar-baz"},
+			namespace: "modules",
+			mappings:  map[string]string{"aws/foo-bar/baz": "custom/foo-bar-baz/aws"},
+			wantErr:   false,
+		},
+		{
+			name:      "single path never ambiguous",
+			dirPaths:  []string{"aws/ec2/instance"},
+			namespace: "modules",
+			wantErr:   false,
+		},
+		{
+			name:      "empty paths",
+			dirPaths:  []string{},
+			namespace: "modules",
+			wantErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mappings := tt.mappings
+			if mappings == nil {
+				mappings = map[string]string{}
+			}
+			err := DetectAmbiguities(tt.dirPaths, tt.namespace, mappings)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DetectAmbiguities() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRegistryPath(t *testing.T) {
+	tests := []struct {
+		path    string
+		wantErr bool
+	}{
+		{"a/b/c", false},
+		{"hetzner/server/hetzner", false},
+		{"aws/ec2-eip/foo", false},
+		{"a/b", true},
+		{"a", true},
+		{"a/b/c/d", true},
+		{"a//c", true},
+		{"/a/b", true},
+		{"a/b/", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			err := ValidateRegistryPath(tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateRegistryPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+		})
+	}
+}
