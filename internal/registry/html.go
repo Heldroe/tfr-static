@@ -409,8 +409,6 @@ var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
 }).Parse(`<p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
 <h1>{{.ModulePath}}</h1>
 {{if .SourceURL}}
-<h2>Provision Instructions</h2>
-<p>Copy and paste into your Terraform configuration and run <code>terraform init</code>:</p>
 <p>Source: <code>{{.SourceURL}}</code></p>
 <pre><code>module "{{moduleName .ModulePath}}" {
   source  = "{{.SourceURL}}"
@@ -435,7 +433,6 @@ var versionTmpl = template.Must(template.New("version").Funcs(template.FuncMap{
 }).Parse(`<p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
 <h1>{{.ModulePath}} <span class="version">{{.Version}}</span></h1>
 {{if .SourceURL}}
-<h2>Provision Instructions</h2>
 <p>Source: <code>{{.SourceURL}}</code></p>
 <pre><code>module "{{moduleName .ModulePath}}" {
   source  = "{{.SourceURL}}"

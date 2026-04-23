@@ -464,8 +464,8 @@ func TestDevServer_HTML_ModulePage(t *testing.T) {
 	if !strings.Contains(content, `module "server"`) {
 		t.Error("module page should contain provision instructions with module name")
 	}
-	if !strings.Contains(content, "Provision Instructions") {
-		t.Error("module page should contain provision instructions heading")
+	if !strings.Contains(content, "source  =") {
+		t.Error("module page should contain source in provision instructions")
 	}
 }
 

@@ -207,12 +207,9 @@ func runPublish(cmd *cobra.Command, args []string) error {
 }
 
 func resolveRegistryPath(dirPath string) (string, error) {
-	regPath, autoMapped, err := module.RegistryPath(dirPath, cfg.Namespace, cfg.ModuleMappings)
+	regPath, _, err := module.RegistryPath(dirPath, cfg.Namespace, cfg.ModuleMappings)
 	if err != nil {
 		return "", err
-	}
-	if autoMapped {
-		log.Printf("module %q -> registry path %q", dirPath, regPath)
 	}
 	return regPath, nil
 }
@@ -247,7 +244,7 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return paths, nil
 	}
 
-	fmt.Printf("Publishing %s version %s...\n", info.ModulePath, info.Version)
+	fmt.Printf("Publishing %s (%s) version %s...\n", info.ModulePath, info.RegistryPath, info.Version)
 	if err := pub.PublishVersion(*info); err != nil {
 		return nil, err
 	}
@@ -260,7 +257,7 @@ func publishSingleTag(pub *registry.Publisher, gitRunner *git.Runner, tag string
 		return nil, err
 	}
 
-	fmt.Printf("Published %s version %s\n", info.ModulePath, info.Version)
+	fmt.Printf("Published %s (%s) version %s\n", info.ModulePath, info.RegistryPath, info.Version)
 	fmt.Println("\nInvalidation paths:")
 	for _, p := range paths {
 		fmt.Printf("  %s\n", p)
@@ -312,7 +309,7 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 	}
 
 	for _, t := range moduleTags {
-		fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
+		fmt.Printf("Publishing %s (%s) version %s...\n", t.ModulePath, t.RegistryPath, t.Version)
 		if err := pub.PublishVersion(t); err != nil {
 			return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 		}
@@ -322,7 +319,7 @@ func publishModuleVersions(pub *registry.Publisher, gitRunner *git.Runner, modul
 		return nil, err
 	}
 
-	fmt.Printf("\nPublished %d versions of %s\n", len(moduleTags), modulePath)
+	fmt.Printf("\nPublished %d versions of %s (%s)\n", len(moduleTags), modulePath, regPath)
 	return paths, nil
 }
 
@@ -388,7 +385,7 @@ func publishAllModules(pub *registry.Publisher, gitRunner *git.Runner) ([]string
 
 	for modPath, modTags := range grouped {
 		for _, t := range modTags {
-			fmt.Printf("Publishing %s version %s...\n", t.ModulePath, t.Version)
+			fmt.Printf("Publishing %s (%s) version %s...\n", t.ModulePath, t.RegistryPath, t.Version)
 			if err := pub.PublishVersion(t); err != nil {
 				return nil, fmt.Errorf("publishing %s: %w", t.Tag, err)
 			}
@@ -455,7 +452,7 @@ func runPublishDev(cmd *cobra.Command) error {
 			return err
 		}
 
-		fmt.Printf("Publishing %s version 0.0.0-dev from working tree...\n", m.Path)
+		fmt.Printf("Publishing %s (%s) version 0.0.0-dev from working tree...\n", m.Path, regPath)
 		if err := publisher.PublishVersionFromWorkTree(repoRoot, m.Path, regPath, devVersion); err != nil {
 			return fmt.Errorf("publishing %s: %w", m.Path, err)
 		}
