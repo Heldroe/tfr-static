@@ -521,6 +521,7 @@ func runPublishDev(cmd *cobra.Command) error {
 func newHTMLGenerator(gitRunner *git.Runner, reader registry.ReadmeReader) (*registry.HTMLGenerator, error) {
 	gen := registry.NewHTMLGenerator(gitRunner, cfg.OutputDir, cfg.HTMLIndex)
 	gen.ReadmeReader = reader
+	gen.BaseURL = cfg.BaseURL
 	if cfg.HTMLBase != "" {
 		if err := gen.LoadBaseTemplate(cfg.HTMLBase); err != nil {
 			return nil, err

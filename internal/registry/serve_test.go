@@ -461,6 +461,12 @@ func TestDevServer_HTML_ModulePage(t *testing.T) {
 	if !strings.Contains(content, "0.0.0-dev") {
 		t.Error("module page should list dev version")
 	}
+	if !strings.Contains(content, `module "server"`) {
+		t.Error("module page should contain provision instructions with module name")
+	}
+	if !strings.Contains(content, "Provision Instructions") {
+		t.Error("module page should contain provision instructions heading")
+	}
 }
 
 func TestDevServer_HTML_VersionPage(t *testing.T) {
@@ -487,6 +493,12 @@ func TestDevServer_HTML_VersionPage(t *testing.T) {
 	}
 	if !strings.Contains(content, "1.0.0") {
 		t.Error("version page should contain version")
+	}
+	if !strings.Contains(content, `module "server"`) {
+		t.Error("version page should contain provision instructions with module name")
+	}
+	if !strings.Contains(content, `version = "1.0.0"`) {
+		t.Error("version page should contain provision instructions with current version")
 	}
 }
 

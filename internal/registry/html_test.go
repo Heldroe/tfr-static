@@ -58,6 +58,7 @@ func TestHTMLGenerator_GenerateAll(t *testing.T) {
 	_, gitRunner := setupHTMLTestRepo(t)
 	outputDir := t.TempDir()
 	gen := NewHTMLGenerator(gitRunner, outputDir, "index.html")
+	gen.BaseURL = "https://registry.example.com"
 
 	grouped := map[string][]module.TagInfo{
 		"hetzner/server": {
@@ -87,6 +88,11 @@ func TestHTMLGenerator_GenerateAll(t *testing.T) {
 	// Should contain rendered README
 	assertFileContains(t, modIndex, "Hetzner Server")
 	assertFileContains(t, modIndex, "<strong>server</strong>")
+	// Provision instructions on module page (latest version)
+	assertFileContains(t, modIndex, "Provision Instructions")
+	assertFileContains(t, modIndex, "registry.example.com/modules/server/hetzner")
+	assertFileContains(t, modIndex, `module "server"`)
+	assertFileContains(t, modIndex, `version = "1.1.0"`)
 
 	// Version index (output uses registry path)
 	verIndex := filepath.Join(outputDir, "modules", "server", "hetzner", "1.0.0", "index.html")
@@ -94,6 +100,11 @@ func TestHTMLGenerator_GenerateAll(t *testing.T) {
 	assertFileContains(t, verIndex, "1.0.0")
 	assertFileContains(t, verIndex, "module.tar.gz")
 	assertFileContains(t, verIndex, `download="modules-server-hetzner-1.0.0.tar.gz"`)
+	// Provision instructions on version page (current version)
+	assertFileContains(t, verIndex, "Provision Instructions")
+	assertFileContains(t, verIndex, "registry.example.com/modules/server/hetzner")
+	assertFileContains(t, verIndex, `module "server"`)
+	assertFileContains(t, verIndex, `version = "1.0.0"`)
 	// Should contain rendered README for this version
 	assertFileContains(t, verIndex, "Hetzner Server")
 

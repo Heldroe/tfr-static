@@ -279,6 +279,7 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 					ArchiveURL:          archiveFile,
 					ArchiveDownloadName: descriptiveArchiveNameFromParts(possibleModule, possibleVersion),
 					ReadmeHTML:          readmeHTML,
+					SourceURL:           r.Host + "/" + possibleModule,
 				}
 				s.renderPage(w, possibleModule+" "+possibleVersion, versionTmpl, data)
 				return
@@ -299,11 +300,18 @@ func (s *DevServer) handleHTMLPage(w http.ResponseWriter, r *http.Request, path 
 		}
 		versions = append(versions, "0.0.0-dev")
 
+		latestVersion := "0.0.0-dev"
+		if len(moduleTags) > 0 {
+			latestVersion = moduleTags[0].Version.Original()
+		}
+
 		readmeHTML := renderMarkdown(reader(dirPath, ""))
 		data := modulePageData{
-			ModulePath: path,
-			Versions:   versions,
-			ReadmeHTML: readmeHTML,
+			ModulePath:    path,
+			Versions:      versions,
+			ReadmeHTML:    readmeHTML,
+			SourceURL:     r.Host + "/" + path,
+			LatestVersion: latestVersion,
 		}
 		s.renderPage(w, path, moduleTmpl, data)
 		return

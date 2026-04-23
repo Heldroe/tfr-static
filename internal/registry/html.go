@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -90,11 +91,13 @@ type basePage struct {
 
 // HTMLGenerator creates HTML documentation pages for the registry.
 type HTMLGenerator struct {
-	Git          *git.Runner
-	OutputDir    string
-	IndexFile    string
-	ReadmeReader ReadmeReader
-	baseTmpl     *template.Template
+	Git              *git.Runner
+	OutputDir        string
+	IndexFile        string
+	BaseURL          string
+	ReadmeReader     ReadmeReader
+	baseTmpl         *template.Template
+	registryHostname string
 }
 
 // NewHTMLGenerator creates a new HTMLGenerator.
@@ -108,6 +111,16 @@ func NewHTMLGenerator(gitRunner *git.Runner, outputDir, indexFile string) *HTMLG
 		IndexFile: indexFile,
 		baseTmpl:  template.Must(template.New("base").Parse(defaultBaseTemplate)),
 	}
+}
+
+func (g *HTMLGenerator) sourceURL(regPath string) string {
+	if g.BaseURL == "" {
+		return ""
+	}
+	if g.registryHostname == "" {
+		g.registryHostname = registryHost(g.BaseURL)
+	}
+	return g.registryHostname + "/" + regPath
 }
 
 // LoadBaseTemplate loads a custom base HTML template from a file path.
@@ -136,9 +149,11 @@ type rootModuleEntry struct {
 }
 
 type modulePageData struct {
-	ModulePath string
-	Versions   []string
-	ReadmeHTML template.HTML
+	ModulePath    string
+	Versions      []string
+	ReadmeHTML    template.HTML
+	SourceURL     string
+	LatestVersion string
 }
 
 type versionPageData struct {
@@ -147,6 +162,7 @@ type versionPageData struct {
 	ArchiveURL          string
 	ArchiveDownloadName string
 	ReadmeHTML          template.HTML
+	SourceURL           string
 }
 
 // GenerateAll generates the complete HTML documentation tree.
@@ -251,10 +267,17 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 		readmeHTML = renderMarkdown(g.readReadme(tags[0].ModulePath, tags[0].Tag))
 	}
 
+	latestVersion := ""
+	if len(versions) > 0 {
+		latestVersion = versions[0]
+	}
+
 	data := modulePageData{
-		ModulePath: regPath,
-		Versions:   versions,
-		ReadmeHTML: readmeHTML,
+		ModulePath:    regPath,
+		Versions:      versions,
+		ReadmeHTML:    readmeHTML,
+		SourceURL:     g.sourceURL(regPath),
+		LatestVersion: latestVersion,
 	}
 	dir := filepath.Join(g.OutputDir, regPath)
 	return g.writePage(filepath.Join(dir, g.IndexFile), regPath, moduleTmpl, data)
@@ -274,6 +297,7 @@ func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 		ArchiveURL:          archiveURL,
 		ArchiveDownloadName: descriptiveArchiveName(regPath, tag.Version),
 		ReadmeHTML:          readmeHTML,
+		SourceURL:           g.sourceURL(regPath),
 	}
 	dir := filepath.Join(g.OutputDir, regPath, tag.Version.Original())
 	return g.writePage(filepath.Join(dir, g.IndexFile), regPath+" "+tag.Version.Original(), versionTmpl, data)
@@ -346,6 +370,22 @@ func relRootVersion(modPath string) string {
 	return strings.Join(parts, "/")
 }
 
+func registryHost(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
+	}
+	return u.Host
+}
+
+func moduleNameFromRegistryPath(registryPath string) string {
+	parts := strings.Split(registryPath, "/")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return registryPath
+}
+
 var rootTmpl = template.Must(template.New("root").Parse(`<h1>Terraform Module Registry</h1>
 <table>
 <thead>
@@ -364,9 +404,19 @@ var rootTmpl = template.Must(template.New("root").Parse(`<h1>Terraform Module Re
 `))
 
 var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
-	"relRoot": relRoot,
+	"relRoot":    relRoot,
+	"moduleName": moduleNameFromRegistryPath,
 }).Parse(`<p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
 <h1>{{.ModulePath}}</h1>
+{{if .SourceURL}}
+<h2>Provision Instructions</h2>
+<p>Copy and paste into your Terraform configuration and run <code>terraform init</code>:</p>
+<p>Source: <code>{{.SourceURL}}</code></p>
+<pre><code>module "{{moduleName .ModulePath}}" {
+  source  = "{{.SourceURL}}"
+  version = "{{.LatestVersion}}"
+}</code></pre>
+{{end}}
 <h2>Versions</h2>
 <ul>
 {{range .Versions}}
@@ -381,8 +431,17 @@ var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
 
 var versionTmpl = template.Must(template.New("version").Funcs(template.FuncMap{
 	"relRootVersion": relRootVersion,
+	"moduleName":     moduleNameFromRegistryPath,
 }).Parse(`<p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
 <h1>{{.ModulePath}} <span class="version">{{.Version}}</span></h1>
+{{if .SourceURL}}
+<h2>Provision Instructions</h2>
+<p>Source: <code>{{.SourceURL}}</code></p>
+<pre><code>module "{{moduleName .ModulePath}}" {
+  source  = "{{.SourceURL}}"
+  version = "{{.Version}}"
+}</code></pre>
+{{end}}
 <p>Download: <a href="{{.ArchiveURL}}" download="{{.ArchiveDownloadName}}">{{.ArchiveURL}}</a></p>
 {{if .ReadmeHTML}}
 <hr>
