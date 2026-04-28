@@ -609,3 +609,10 @@ go test ./...
 ```
 
 Tests cover tag parsing (including edge cases with dashes, pre-release versions, and malformed tags), module discovery, version ordering, archive generation from git history (including deleted modules), registry file generation, and config file loading.
+
+## To-do items
+
+* Provider registry protocol support
+* Extract all HTML templates and allow editing all of them
+* Support serving gzipped generated files from `tfr-static serve`
+* Registry API read endpoints support
