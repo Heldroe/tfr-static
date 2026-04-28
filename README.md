@@ -110,6 +110,10 @@ invalidation_url_encode = false
 invalidation_dirs       = false
 html_base               = "templates/base.html"
 namespace               = "modules"
+repository_url          = "https://github.com/org/terraform-modules"
+repository_prefix       = "/tree/"
+repository_ref          = "main"
+repository_tag_prefix   = "/tree/"
 
 # Optional: override auto-derived registry paths for specific modules
 module "hetzner/server" {
@@ -129,6 +133,10 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `--modules-path` | Path prefix for `modules.v1` in service discovery | `/` |
 | `--namespace` | Default namespace for auto-derived registry paths | `modules` |
 | `--repo` | Path to the git repository | `.` |
+| `--repository-url` | Source repository URL; enables source links in HTML pages | *(disabled)* |
+| `--repository-prefix` | URL path segment between repo and branch ref | `/tree/` |
+| `--repository-ref` | Branch or ref for module-page source links | *(uses `--main-branch`)* |
+| `--repository-tag-prefix` | URL path segment between repo and tag for version-page links | `/tree/` |
 
 ### Environment variables
 
@@ -151,6 +159,10 @@ All fields are optional. Unknown fields will cause an error to catch typos early
 | `TFR_INVALIDATION_URL_ENCODE` | `--invalidation-url-encode` |
 | `TFR_INVALIDATION_DIRS` | `--invalidation-dirs` |
 | `TFR_HTML_BASE` | `--html-base` |
+| `TFR_REPOSITORY_URL` | `--repository-url` |
+| `TFR_REPOSITORY_PREFIX` | `--repository-prefix` |
+| `TFR_REPOSITORY_REF` | `--repository-ref` |
+| `TFR_REPOSITORY_TAG_PREFIX` | `--repository-tag-prefix` |
 | `TFR_ADDR` | `--addr` (serve) |
 
 ## Commands
@@ -294,6 +306,25 @@ target/
 If a module directory contains a `README.md` next to its `.tf` files, the README is rendered as HTML on both the module page (from the latest version) and each version page (from that version's tag).
 
 Use `--html-index` to change the filename (e.g. `--html-index docs.html`).
+
+#### Repository source links
+
+When `--repository-url` is set, module and version pages include a "View module source code" link pointing to the source directory on your git forge. The module page links to the branch ref, while each version page links to that version's exact git tag.
+
+```bash
+tfr-static publish --all --html --repository-url https://github.com/org/terraform-modules
+```
+
+The link URL is constructed as `{repository_url}{repository_prefix}{ref}/{module_path}`. For version pages, `{repository_tag_prefix}` and the git tag are used instead.
+
+The default prefix `/tree/` works for GitHub. For other forges, override the prefix:
+
+| Forge | `--repository-prefix` | `--repository-tag-prefix` |
+|---|---|---|
+| GitHub | `/tree/` *(default)* | `/tree/` *(default)* |
+| GitLab | `/-/tree/` | `/-/tree/` |
+| Bitbucket | `/src/` | `/src/` |
+| Gitea / Forgejo | `/src/branch/` | `/src/tag/` |
 
 #### Custom base template
 

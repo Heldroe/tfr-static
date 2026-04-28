@@ -34,6 +34,10 @@ type FileConfig struct {
 	InvalidationDirs      *bool   `hcl:"invalidation_dirs,optional"`
 	HTMLBase              *string `hcl:"html_base,optional"`
 	Namespace             *string `hcl:"namespace,optional"`
+	RepositoryURL         *string `hcl:"repository_url,optional"`
+	RepositoryPrefix      *string `hcl:"repository_prefix,optional"`
+	RepositoryRef         *string `hcl:"repository_ref,optional"`
+	RepositoryTagPrefix   *string `hcl:"repository_tag_prefix,optional"`
 	Modules              []ModuleBlock `hcl:"module,block"`
 }
 
@@ -56,6 +60,10 @@ type Config struct {
 	InvalidationDirs      bool
 	HTMLBase              string
 	Namespace             string
+	RepositoryURL         string
+	RepositoryPrefix      string
+	RepositoryRef         string
+	RepositoryTagPrefix   string
 	ModuleMappings        map[string]string
 }
 

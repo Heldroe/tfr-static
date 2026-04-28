@@ -91,13 +91,17 @@ type basePage struct {
 
 // HTMLGenerator creates HTML documentation pages for the registry.
 type HTMLGenerator struct {
-	Git              *git.Runner
-	OutputDir        string
-	IndexFile        string
-	BaseURL          string
-	ReadmeReader     ReadmeReader
-	baseTmpl         *template.Template
-	registryHostname string
+	Git                 *git.Runner
+	OutputDir           string
+	IndexFile           string
+	BaseURL             string
+	RepositoryURL       string
+	RepositoryPrefix    string
+	RepositoryRef       string
+	RepositoryTagPrefix string
+	ReadmeReader        ReadmeReader
+	baseTmpl            *template.Template
+	registryHostname    string
 }
 
 // NewHTMLGenerator creates a new HTMLGenerator.
@@ -121,6 +125,31 @@ func (g *HTMLGenerator) sourceURL(regPath string) string {
 		g.registryHostname = registryHost(g.BaseURL)
 	}
 	return g.registryHostname + "/" + regPath
+}
+
+func (g *HTMLGenerator) repositoryRefURL(sourcePath string) string {
+	if g.RepositoryURL == "" {
+		return ""
+	}
+	return g.RepositoryURL + g.RepositoryPrefix + g.RepositoryRef + "/" + sourcePath
+}
+
+func (g *HTMLGenerator) repositoryTagURL(tag, sourcePath string) string {
+	if g.RepositoryURL == "" {
+		return ""
+	}
+	return g.RepositoryURL + g.RepositoryTagPrefix + escapeTagSegment(tag) + "/" + sourcePath
+}
+
+// escapeTagSegment URL-path-escapes each slash-separated segment of a git tag,
+// so tags like "bunnynet/dns/zone-1.2.0" survive being written into an href
+// while keeping "/" as a path separator.
+func escapeTagSegment(tag string) string {
+	parts := strings.Split(tag, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
 }
 
 // LoadBaseTemplate loads a custom base HTML template from a file path.
@@ -153,6 +182,7 @@ type modulePageData struct {
 	Versions      []string
 	ReadmeHTML    template.HTML
 	SourceURL     string
+	RepositoryURL string
 	LatestVersion string
 }
 
@@ -163,6 +193,7 @@ type versionPageData struct {
 	ArchiveDownloadName string
 	ReadmeHTML          template.HTML
 	SourceURL           string
+	RepositoryURL       string
 }
 
 // GenerateAll generates the complete HTML documentation tree.
@@ -272,11 +303,17 @@ func (g *HTMLGenerator) generateModuleIndex(modPath string, tags []module.TagInf
 		latestVersion = versions[0]
 	}
 
+	repositoryURL := ""
+	if len(tags) > 0 {
+		repositoryURL = g.repositoryRefURL(tags[0].ModulePath)
+	}
+
 	data := modulePageData{
 		ModulePath:    regPath,
 		Versions:      versions,
 		ReadmeHTML:    readmeHTML,
 		SourceURL:     g.sourceURL(regPath),
+		RepositoryURL: repositoryURL,
 		LatestVersion: latestVersion,
 	}
 	dir := filepath.Join(g.OutputDir, regPath)
@@ -298,6 +335,7 @@ func (g *HTMLGenerator) generateVersionIndex(tag module.TagInfo) error {
 		ArchiveDownloadName: descriptiveArchiveName(regPath, tag.Version),
 		ReadmeHTML:          readmeHTML,
 		SourceURL:           g.sourceURL(regPath),
+		RepositoryURL:       g.repositoryTagURL(tag.Tag, tag.ModulePath),
 	}
 	dir := filepath.Join(g.OutputDir, regPath, tag.Version.Original())
 	return g.writePage(filepath.Join(dir, g.IndexFile), regPath+" "+tag.Version.Original(), versionTmpl, data)
@@ -408,6 +446,9 @@ var moduleTmpl = template.Must(template.New("module").Funcs(template.FuncMap{
 	"moduleName": moduleNameFromRegistryPath,
 }).Parse(`<p><a href="{{relRoot .ModulePath}}">← Back to registry</a></p>
 <h1>{{.ModulePath}}</h1>
+{{if .RepositoryURL}}
+<p><a href="{{.RepositoryURL}}">View module source code</a></p>
+{{end}}
 {{if .SourceURL}}
 <p>Source: <code>{{.SourceURL}}</code></p>
 <pre><code>module "{{moduleName .ModulePath}}" {
@@ -432,6 +473,9 @@ var versionTmpl = template.Must(template.New("version").Funcs(template.FuncMap{
 	"moduleName":     moduleNameFromRegistryPath,
 }).Parse(`<p><a href="../">← {{.ModulePath}}</a> · <a href="{{relRootVersion .ModulePath}}">Registry</a></p>
 <h1>{{.ModulePath}} <span class="version">{{.Version}}</span></h1>
+{{if .RepositoryURL}}
+<p><a href="{{.RepositoryURL}}">View module source code</a></p>
+{{end}}
 {{if .SourceURL}}
 <p>Source: <code>{{.SourceURL}}</code></p>
 <pre><code>module "{{moduleName .ModulePath}}" {

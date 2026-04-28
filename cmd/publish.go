@@ -519,6 +519,10 @@ func newHTMLGenerator(gitRunner *git.Runner, reader registry.ReadmeReader) (*reg
 	gen := registry.NewHTMLGenerator(gitRunner, cfg.OutputDir, cfg.HTMLIndex)
 	gen.ReadmeReader = reader
 	gen.BaseURL = cfg.BaseURL
+	gen.RepositoryURL = cfg.RepositoryURL
+	gen.RepositoryPrefix = cfg.RepositoryPrefix
+	gen.RepositoryRef = cfg.RepositoryRef
+	gen.RepositoryTagPrefix = cfg.RepositoryTagPrefix
 	if cfg.HTMLBase != "" {
 		if err := gen.LoadBaseTemplate(cfg.HTMLBase); err != nil {
 			return nil, err

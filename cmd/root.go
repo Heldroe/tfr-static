@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/Heldroe/tfr-static/internal/config"
@@ -43,6 +44,10 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfg.MainBranch, "main-branch", "", "expected main branch name")
 	rootCmd.PersistentFlags().StringVar(&cfg.ModulesPath, "modules-path", "", "path prefix for modules.v1 in service discovery")
 	rootCmd.PersistentFlags().StringVar(&cfg.Namespace, "namespace", "", "default namespace for auto-derived registry paths (default \"modules\")")
+	rootCmd.PersistentFlags().StringVar(&cfg.RepositoryURL, "repository-url", "", "source repository URL (e.g. https://github.com/org/repo); enables source links in module HTML pages")
+	rootCmd.PersistentFlags().StringVar(&cfg.RepositoryPrefix, "repository-prefix", "", "URL path segment between repo and branch ref (default \"/tree/\")")
+	rootCmd.PersistentFlags().StringVar(&cfg.RepositoryRef, "repository-ref", "", "branch or ref for module-page source links (defaults to --main-branch)")
+	rootCmd.PersistentFlags().StringVar(&cfg.RepositoryTagPrefix, "repository-tag-prefix", "", "URL path segment between repo and tag for version-page source links (default \"/tree/\")")
 }
 
 // loadConfig applies configuration with precedence:
@@ -71,6 +76,7 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 
 	var fileBaseURL, fileMainBranch, fileOutputDir, fileModulesPath, fileHTMLIndex, fileNamespace *string
 	var fileInvalidationFile, fileInvalidationFormat, fileInvalidationBaseURL, fileHTMLBase *string
+	var fileRepositoryURL, fileRepositoryPrefix, fileRepositoryRef, fileRepositoryTagPrefix *string
 	var fileHTML, fileGzip, fileTerraformDocs *bool
 	var fileInvalidationFullURL, fileInvalidationURLEncode, fileInvalidationDirs *bool
 	if fileCfg != nil {
@@ -90,6 +96,10 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileInvalidationDirs = fileCfg.InvalidationDirs
 		fileHTMLBase = fileCfg.HTMLBase
 		fileNamespace = fileCfg.Namespace
+		fileRepositoryURL = fileCfg.RepositoryURL
+		fileRepositoryPrefix = fileCfg.RepositoryPrefix
+		fileRepositoryRef = fileCfg.RepositoryRef
+		fileRepositoryTagPrefix = fileCfg.RepositoryTagPrefix
 	}
 
 	cfg.BaseURL = resolveValue(
@@ -188,6 +198,30 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		fileNamespace,
 		"modules",
 	)
+	cfg.RepositoryURL = strings.TrimRight(resolveValue(
+		flagIfChanged(cmd, "repository-url"),
+		os.Getenv("TFR_REPOSITORY_URL"),
+		fileRepositoryURL,
+		"",
+	), "/")
+	cfg.RepositoryPrefix = normalizeURLPathSegment(resolveValue(
+		flagIfChanged(cmd, "repository-prefix"),
+		os.Getenv("TFR_REPOSITORY_PREFIX"),
+		fileRepositoryPrefix,
+		"/tree/",
+	))
+	cfg.RepositoryRef = resolveValue(
+		flagIfChanged(cmd, "repository-ref"),
+		os.Getenv("TFR_REPOSITORY_REF"),
+		fileRepositoryRef,
+		cfg.MainBranch,
+	)
+	cfg.RepositoryTagPrefix = normalizeURLPathSegment(resolveValue(
+		flagIfChanged(cmd, "repository-tag-prefix"),
+		os.Getenv("TFR_REPOSITORY_TAG_PREFIX"),
+		fileRepositoryTagPrefix,
+		"/tree/",
+	))
 
 	cfg.ModuleMappings = make(map[string]string)
 	if fileCfg != nil {
@@ -247,6 +281,16 @@ func resolveBoolValue(flag *bool, envVal string, fileVal *bool, defaultVal bool)
 		return *fileVal
 	}
 	return defaultVal
+}
+
+// normalizeURLPathSegment ensures a URL path segment is surrounded by a single
+// slash on each side, so "tree", "/tree", "tree/" and "/tree/" all render as
+// "/tree/" when concatenated between a URL and another path.
+func normalizeURLPathSegment(s string) string {
+	if s == "" {
+		return s
+	}
+	return "/" + strings.Trim(s, "/") + "/"
 }
 
 // resolveValue picks the first non-empty value in precedence order:
