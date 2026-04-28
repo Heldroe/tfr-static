@@ -49,7 +49,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 }
 
 func runServeStatic() error {
-	log.Printf("Serving static registry from %s on %s", cfg.OutputDir, serveAddr)
+	log.Printf("Serving static registry from %s on http://%s", cfg.OutputDir, serveAddr)
 	return http.ListenAndServe(serveAddr, http.FileServer(http.Dir(cfg.OutputDir)))
 }
 
@@ -67,7 +67,7 @@ func runServeDev() error {
 	}
 	dev.HTMLEnabled = true // always show HTML in dev mode
 
-	log.Printf("Dev registry serving from %s on %s", repoRoot, serveAddr)
+	log.Printf("Dev registry serving from %s on http://%s", repoRoot, serveAddr)
 	log.Printf("Modules are served from the current working tree (including uncommitted changes)")
 	log.Printf("All version requests return the current code regardless of version")
 	log.Printf("HTML documentation enabled")
