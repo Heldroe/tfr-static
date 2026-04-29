@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -16,17 +17,27 @@ var cfg config.Config
 // Version is set at build time via ldflags:
 //
 //	go build -ldflags "-X github.com/Heldroe/tfr-static/cmd.Version=1.0.0"
+//
+// When the binary is installed via `go install module@vX.Y.Z`, ldflags are not
+// applied, but the module version is available from runtime/debug.BuildInfo,
+// so resolvedVersion falls back to that.
 var Version = "dev"
 
-var rootCmd = &cobra.Command{
-	Use:   "tfr-static",
-	Short: "Static Terraform module registry generator",
-	Long: fmt.Sprintf(`tfr-static %s — Static Terraform module registry generator
+func resolvedVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return Version
+}
 
-Generates static files for hosting a Terraform module registry
-on object storage (e.g. S3). It uses git tags as the source of truth for
-module versions and generates registry-protocol-compliant files.`, Version),
-	Version:           Version,
+var rootCmd = &cobra.Command{
+	Use:               "tfr-static",
+	Short:             "Static Terraform module registry generator",
 	PersistentPreRunE: loadConfig,
 	SilenceUsage:      true,
 }
@@ -38,6 +49,14 @@ func Execute() {
 }
 
 func init() {
+	v := resolvedVersion()
+	rootCmd.Version = v
+	rootCmd.Long = fmt.Sprintf(`tfr-static %s — Static Terraform module registry generator
+
+Generates static files for hosting a Terraform module registry
+on object storage (e.g. S3). It uses git tags as the source of truth for
+module versions and generates registry-protocol-compliant files.`, v)
+
 	rootCmd.PersistentFlags().StringVar(&cfg.OutputDir, "output-dir", "", "output directory for generated files")
 	rootCmd.PersistentFlags().StringVar(&cfg.BaseURL, "base-url", "", "base URL for the registry (e.g. https://registry.example.com)")
 	rootCmd.PersistentFlags().StringVar(&cfg.RepoPath, "repo", "", "path to the git repository")
